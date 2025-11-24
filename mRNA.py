@@ -840,7 +840,7 @@ class mRNA:
         # Return as percentage
         return (identical / total) * 100.0
 
-    def save_statistics(self, step, acceptance_rate, output_file):
+    def save_statistics(self, step, acceptance_rate, output_file, loss_components=None):
         """
         Save statistics to output file.
         
@@ -848,6 +848,8 @@ class mRNA:
             step: Current step number
             acceptance_rate: Acceptance rate over last n_sample steps
             output_file: File object or path to write statistics
+            loss_components: Optional dict of pre-computed loss component values.
+                           If None, will compute from cached properties (slower).
         """
         #hybridised_pct = self.calculate_hybridised_contacts_percentage()
         sequence_identity = self.calculate_sequence_identity()
@@ -855,64 +857,93 @@ class mRNA:
         # Collect loss component values for non-zero weights
         loss_values = []
         
+        # Use pre-computed values if provided, otherwise access cached properties
+        if loss_components is None:
+            loss_components = {}
+        
+        # Access cached properties - they should be fast since loss was just computed
+        # Properties use sequence-based caching, so accessing them after loss computation is efficient
         w_cai = self._loss_weights.get('cai', 0.0)
         if w_cai != 0.0:
-            cai_value = np.exp(self.calculate_CAI_log)
+            if 'cai' in loss_components:
+                cai_value = loss_components['cai']
+            else:
+                cai_value = np.exp(self.calculate_CAI_log)
             loss_values.append(f"{cai_value:.6e}")
         
         w_mfe = self._loss_weights.get('mfe', 0.0)
         if w_mfe != 0.0:
-            try:
-                mfe_value = self.mfe
-                loss_values.append(f"{mfe_value:.6e}")
-            except Exception:
-                loss_values.append("0.000000e+00")
+            if 'mfe' in loss_components:
+                mfe_value = loss_components['mfe']
+            else:
+                try:
+                    mfe_value = self.mfe
+                except Exception:
+                    mfe_value = 0.0
+            loss_values.append(f"{mfe_value:.6e}")
         
         w_fe = self._loss_weights.get('fe', 0.0)
         if w_fe != 0.0:
-            try:
-                fe_value = self.free_energy
-                loss_values.append(f"{fe_value:.6e}")
-            except Exception:
-                loss_values.append("0.000000e+00")
+            if 'fe' in loss_components:
+                fe_value = loss_components['fe']
+            else:
+                try:
+                    fe_value = self.free_energy
+                except Exception:
+                    fe_value = 0.0
+            loss_values.append(f"{fe_value:.6e}")
         
         w_cpg = self._loss_weights.get('cpg', 0.0)
         if w_cpg != 0.0:
-            cpg_value = self.cpg_count
+            if 'cpg' in loss_components:
+                cpg_value = loss_components['cpg']
+            else:
+                cpg_value = self.cpg_count
             loss_values.append(f"{cpg_value:.6e}")
         
         w_stem = self._loss_weights.get('stem', 0.0)
         if w_stem != 0.0:
-            try:
-                stem_value = self.stem_penalty
-                loss_values.append(f"{stem_value:.6e}")
-            except Exception:
-                loss_values.append("0.000000e+00")
+            if 'stem' in loss_components:
+                stem_value = loss_components['stem']
+            else:
+                try:
+                    stem_value = self.stem_penalty
+                except Exception:
+                    stem_value = 0.0
+            loss_values.append(f"{stem_value:.6e}")
         
         w_utr = self._loss_weights.get('utr_hybridisation', 0.0)
         if w_utr != 0.0:
-            try:
-                utr_value = self.utr_hybridisation_penalty
-                loss_values.append(f"{utr_value:.6e}")
-            except Exception:
-                loss_values.append("0.000000e+00")
+            if 'utr_hybridisation' in loss_components:
+                utr_value = loss_components['utr_hybridisation']
+            else:
+                try:
+                    utr_value = self.utr_hybridisation_penalty
+                except Exception:
+                    utr_value = 0.0
+            loss_values.append(f"{utr_value:.6e}")
         
         w_hairpin = self._loss_weights.get('initial_hybridisation', 0.0)
         if w_hairpin != 0.0:
-            try:
-                hairpin_value = self.initial_hybridisation_penalty
-                loss_values.append(f"{hairpin_value:.6e}")
-            except (ValueError, AttributeError):
-                # Skip if initial_region_end_index is not set
-                pass
+            if 'initial_hybridisation' in loss_components:
+                hairpin_value = loss_components['initial_hybridisation']
+            else:
+                try:
+                    hairpin_value = self.initial_hybridisation_penalty
+                except (ValueError, AttributeError):
+                    hairpin_value = 0.0
+            loss_values.append(f"{hairpin_value:.6e}")
         
         w_restriction = self._loss_weights.get('restriction_sites', 0.0)
         if w_restriction != 0.0:
-            try:
-                restriction_value = self.restriction_sites_count
-                loss_values.append(f"{restriction_value:.6e}")
-            except Exception:
-                loss_values.append("0.000000e+00")
+            if 'restriction_sites' in loss_components:
+                restriction_value = loss_components['restriction_sites']
+            else:
+                try:
+                    restriction_value = self.restriction_sites_count
+                except Exception:
+                    restriction_value = 0.0
+            loss_values.append(f"{restriction_value:.6e}")
         
         # Format: step, acceptance_rate, sequence_identity_%, [loss_component_values...]
         loss_str = "\t".join(loss_values) if loss_values else ""
@@ -1399,13 +1430,6 @@ class mRNA:
                 except Exception as e:
                     print(f"Error saving statistics at step {i}: {e}")
                 
-                # Save loss components
-                #try:
-                #    self.save_loss_components(i)
-                #except Exception as e:
-                #    print(f"Error saving loss components at step {i}: {e}")
-                #    import traceback
-                #    traceback.print_exc()
 
             # Save probability matrix and structure less frequently (every sample_frequency * 10 steps)
             # This is done less often because these files can be large and expensive to compute
@@ -1419,6 +1443,14 @@ class mRNA:
                     self.save_structure(i)
                 except Exception as e:
                     print(f"Error saving structure at step {i}: {e}")
+                
+                # Save loss components
+                try:
+                    self.save_loss_components(i)
+                except Exception as e:
+                    print(f"Error saving loss components at step {i}: {e}")
+                    #import traceback
+                    #traceback.print_exc()
 
         # Save final statistics
         # Calculate acceptance rate over last n_sample steps
@@ -1500,4 +1532,155 @@ if __name__ == "__main__":
     print(f"Printing structure with minimum energy in structure.svg")
     system.visualize_structure(filename="structure.svg", format="svg")
     print(f"Structure visualized in structure.svg")
+
+
+def plot_optimization_statistics(statistics_file="opt_statistics.txt", output_file=None, figsize=(14, 10)):
+    """
+    Plot optimization statistics from opt_statistics.txt file.
+    
+    Creates subplots for:
+    - Acceptance rate over steps
+    - Sequence identity over steps
+    - Loss components over steps (CAI, Free Energy, CpG, Stem, UTR Hybridisation, Initial Hybridisation)
+    - Total loss (if computable from components)
+    
+    Args:
+        statistics_file: Path to the statistics file (default: "opt_statistics.txt")
+        output_file: Path to save the plot (default: None, displays interactively)
+        figsize: Figure size tuple (default: (14, 10))
+    
+    Returns:
+        matplotlib figure object
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        raise ImportError("matplotlib is required for plotting. Install with: pip install matplotlib")
+    
+    # Read the statistics file
+    try:
+        with open(statistics_file, 'r') as f:
+            all_lines = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Statistics file not found: {statistics_file}")
+    
+    if not all_lines:
+        raise ValueError(f"No data found in {statistics_file}")
+    
+    # Parse header (first line starting with '#')
+    header_line = None
+    data_lines = []
+    for line in all_lines:
+        if line.startswith('#'):
+            if header_line is None:
+                header_line = line.lstrip('#').strip()
+        else:
+            data_lines.append(line)
+    
+    if not header_line:
+        raise ValueError("Could not find header in statistics file")
+    
+    if not data_lines:
+        raise ValueError("No data lines found in statistics file")
+    
+    # Parse header
+    header = [col.strip() for col in header_line.split('\t')]
+    
+    # Parse data
+    data = {}
+    for col in header:
+        data[col] = []
+    
+    for line in data_lines:
+        values = [v.strip() for v in line.split('\t')]
+        for i, val in enumerate(values):
+            if i < len(header):
+                try:
+                    data[header[i]].append(float(val))
+                except ValueError:
+                    data[header[i]].append(val)
+    
+    # Convert to numpy arrays for easier plotting
+    steps = np.array(data.get('Step', []))
+    if len(steps) == 0:
+        raise ValueError("No data points found in statistics file")
+    
+    # Determine number of subplots needed
+    # Always plot: Acceptance_Rate, Sequence_Identity_%
+    # Then plot all loss components that are present
+    loss_components = []
+    for col in header:
+        if col not in ['Step', 'Acceptance_Rate', 'Sequence_Identity_%']:
+            loss_components.append(col)
+    
+    # Create subplots
+    n_plots = 2 + len(loss_components)  # Acceptance rate + Sequence identity + loss components
+    n_cols = 2
+    n_rows = (n_plots + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+    if n_plots == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+    
+    plot_idx = 0
+    
+    # Plot 1: Acceptance Rate
+    if 'Acceptance_Rate' in data and len(data['Acceptance_Rate']) > 0:
+        ax = axes[plot_idx]
+        ax.plot(steps, data['Acceptance_Rate'], 'b-', linewidth=2, marker='o', markersize=4)
+        ax.set_xlabel('Step', fontsize=11)
+        ax.set_ylabel('Acceptance Rate', fontsize=11)
+        ax.set_title('Acceptance Rate Over Optimization', fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim([0, 1.1])
+        plot_idx += 1
+    
+    # Plot 2: Sequence Identity
+    if 'Sequence_Identity_%' in data and len(data['Sequence_Identity_%']) > 0:
+        ax = axes[plot_idx]
+        ax.plot(steps, data['Sequence_Identity_%'], 'g-', linewidth=2, marker='s', markersize=4)
+        ax.set_xlabel('Step', fontsize=11)
+        ax.set_ylabel('Sequence Identity (%)', fontsize=11)
+        ax.set_title('Sequence Identity Over Optimization', fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim([0, 110])
+        plot_idx += 1
+    
+    # Plot loss components
+    colors = ['r', 'm', 'c', 'orange', 'purple', 'brown', 'pink', 'gray']
+    for i, component in enumerate(loss_components):
+        if component in data and len(data[component]) > 0:
+            ax = axes[plot_idx]
+            color = colors[i % len(colors)]
+            values = np.array(data[component])
+            
+            # Handle different scales - some might be very small (scientific notation)
+            ax.plot(steps, values, color=color, linewidth=2, marker='.', markersize=4, label=component)
+            ax.set_xlabel('Step', fontsize=11)
+            ax.set_ylabel(component, fontsize=11)
+            ax.set_title(f'{component} Over Optimization', fontsize=12, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            
+            # Use scientific notation for very small or large values
+            if np.any(np.abs(values) < 1e-3) or np.any(np.abs(values) > 1e3):
+                ax.ticklabel_format(style='scientific', axis='y', scilimits=(0,0))
+            
+            plot_idx += 1
+    
+    # Hide unused subplots
+    for idx in range(plot_idx, len(axes)):
+        axes[idx].set_visible(False)
+    
+    plt.tight_layout()
+    
+    # Save or show
+    if output_file:
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        print(f"Plot saved to {output_file}")
+    else:
+        plt.show()
+    
+    return fig
 
