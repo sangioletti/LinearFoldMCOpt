@@ -54,12 +54,12 @@ sequence = nucleotide_sequence
 sequence = "AUG" + sequence + "UAA"
 weights = {
                 #'mfe': 1.0, 
-                'cai': 5.0, 
+                'cai': 10.0, 
                 'fe': 1.0, 
-                'cpg': 1.0, 
-                'stem': 5.0, 
-                'utr_hybridisation': 5.0, 
-                'initial_hybridisation': 5.0, 
+                'cpg': 5.0, 
+                'stem': 10.0, 
+                'utr_hybridisation': 10.0, 
+                'initial_hybridisation': 10.0, 
                 #'restriction_sites': 0.0 
                 }
 system = mRNA( 
