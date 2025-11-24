@@ -15,7 +15,7 @@ using namespace std;
 
 void BeamCKYParser::output_to_file(string file_name, const char * type) {
     if(!file_name.empty()) {
-        printf("Outputing base pairing probability matrix to %s...\n", file_name.c_str()); 
+        if (!quiet_mode) printf("Outputing base pairing probability matrix to %s...\n", file_name.c_str()); 
         FILE *fptr = fopen(file_name.c_str(), type); 
         if (fptr == NULL) { 
             printf("Could not open file!\n"); 
@@ -34,7 +34,7 @@ void BeamCKYParser::output_to_file(string file_name, const char * type) {
         }
         fprintf(fptr, "\n");
         fclose(fptr); 
-        printf("Done!\n"); 
+        if (!quiet_mode) printf("Done!\n"); 
     }
 
     return;
@@ -45,7 +45,7 @@ void BeamCKYParser::output_to_file_MEA_threshknot_bpseq(string file_name, const 
     int i,j;
     char nuc;
     if(!file_name.empty()) {
-        printf("Outputing base pairs in bpseq format to %s...\n", file_name.c_str()); 
+        if (!quiet_mode) printf("Outputing base pairs in bpseq format to %s...\n", file_name.c_str()); 
         FILE *fptr = fopen(file_name.c_str(), type); 
         if (fptr == NULL) { 
             printf("Could not open file!\n"); 
@@ -65,20 +65,22 @@ void BeamCKYParser::output_to_file_MEA_threshknot_bpseq(string file_name, const 
 
         fprintf(fptr, "\n");
         fclose(fptr); 
-        printf("Done!\n"); 
+        if (!quiet_mode) printf("Done!\n"); 
     }
     else{
-        for (int i = 1; i <= seq_length; i++) {
-            if (pairs.find(i) != pairs.end()){
-                j = pairs[i];
+        if (!quiet_mode) {
+            for (int i = 1; i <= seq_length; i++) {
+                if (pairs.find(i) != pairs.end()){
+                    j = pairs[i];
+                }
+                else{
+                    j = 0;
+                }
+                nuc = seq[i-1];
+                printf("%d %c %d\n", i, nuc, j);
             }
-            else{
-                j = 0;
-            }
-            nuc = seq[i-1];
-            printf("%d %c %d\n", i, nuc, j);
+            printf("\n");
         }
-        printf("\n");
     }
 
 }
@@ -189,8 +191,26 @@ void BeamCKYParser::ThreshKnot(string & seq){
         }
     }
 
-    fprintf(stderr, "%s\n", seq.c_str());
+    if (!quiet_mode) fprintf(stderr, "%s\n", seq.c_str());
     output_to_file_MEA_threshknot_bpseq(threshknot_file_index, "w", pairs, seq);
+}
+
+void BeamCKYParser::export_bpp_dense(double* buffer, size_t buffer_len) const {
+    if (buffer == nullptr) return;
+    size_t n = seq_length;
+    size_t required = n * n;
+    assert(buffer_len >= required && "BPP buffer is smaller than required");
+    std::fill(buffer, buffer + required, 0.0);
+    for (const auto& entry : Pij) {
+        const int i = entry.first.first - 1;
+        const int j = entry.first.second - 1;
+        if (i < 0 || j < 0 || static_cast<size_t>(i) >= n || static_cast<size_t>(j) >= n) {
+            continue;
+        }
+        double prob = entry.second;
+        buffer[static_cast<size_t>(i) * n + j] = prob;
+        buffer[static_cast<size_t>(j) * n + i] = prob;
+    }
 }
 
 void BeamCKYParser::PairProb_MEA(string & seq) {
@@ -254,6 +274,7 @@ void BeamCKYParser::PairProb_MEA(string & seq) {
     }
 
     auto structure = back_trace(0,seq_length-1, back_pointer);
+    last_mea_structure = structure;
 
     if (!bpseq){
         if(!mea_file_index.empty()) {
@@ -266,7 +287,7 @@ void BeamCKYParser::PairProb_MEA(string & seq) {
             fprintf(fptr, "%s\n\n", structure.c_str());
         }
 
-        else{
+        else if (!quiet_mode){
             printf("%s\n", seq.c_str());
             printf("%s\n\n", structure.c_str());
         }
@@ -514,7 +535,7 @@ void BeamCKYParser::outside(vector<int> next_pair[]){
     gettimeofday(&bpp_endtime, NULL);
     double bpp_elapsed_time = bpp_endtime.tv_sec - bpp_starttime.tv_sec + (bpp_endtime.tv_usec-bpp_starttime.tv_usec)/1000000.0;
 
-    if(is_verbose) fprintf(stderr,"Base Pairing Probabilities Calculation Time: %.2f seconds.\n", bpp_elapsed_time);
+    if(is_verbose && !quiet_mode) fprintf(stderr,"Base Pairing Probabilities Calculation Time: %.2f seconds.\n", bpp_elapsed_time);
 
     fflush(stdout);
 

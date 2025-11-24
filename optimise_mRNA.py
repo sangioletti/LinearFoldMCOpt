@@ -51,7 +51,7 @@ nucleotide_sequence = aa_to_codon_sequence(aa_sequence)
 
 
 sequence = nucleotide_sequence
-sequence = "AUG" + sequence + "UAA"
+sequence = "AUUUGGUGGAGG" + "AUG" + sequence + "UAA"
 weights = {
                 #'mfe': 1.0, 
                 'cai': 10.0, 

@@ -103,6 +103,9 @@ double BeamCKYParser::parse(string& seq) {
 
     gettimeofday(&parse_starttime, NULL);
 
+    Pij.clear();
+    last_mea_structure.clear();
+
     prepare(static_cast<unsigned>(seq.length()));
 
     for (int i = 0; i < seq_length; ++i)
@@ -446,13 +449,13 @@ double BeamCKYParser::parse(string& seq) {
     double ensemble; 
 #ifdef lpv
     ensemble = -kT * viterbi.alpha / 100.0; // -kT log(Q(x))
-    fprintf(stderr,"Free Energy of Ensemble: %.5f kcal/mol\n", ensemble);
+    if (!quiet_mode) fprintf(stderr,"Free Energy of Ensemble: %.5f kcal/mol\n", ensemble);
 #else
     ensemble = viterbi.alpha;
-    fprintf(stderr,"Log Partition Coefficient: %.5f\n", ensemble);
+    if (!quiet_mode) fprintf(stderr,"Log Partition Coefficient: %.5f\n", ensemble);
 #endif
 
-    if(is_verbose) fprintf(stderr,"Partition Function Calculation Time: %.2f seconds.\n", parse_elapsed_time);
+    if(is_verbose && !quiet_mode) fprintf(stderr,"Partition Function Calculation Time: %.2f seconds.\n", parse_elapsed_time);
 
     fflush(stdout);
 
@@ -520,7 +523,8 @@ BeamCKYParser::BeamCKYParser(int beam_size,
                              string ThreshKnot_file_index,
                              string shape_file_path,
                              bool fasta,
-			                 int dangles)
+			                 int dangles,
+                             bool quiet)
     : beam(beam_size), 
       no_sharp_turn(nosharpturn), 
       is_verbose(verbose),
@@ -537,7 +541,8 @@ BeamCKYParser::BeamCKYParser(int beam_size,
       threshknot_threshold(ThreshKnot_threshold),
       threshknot_file_index(ThreshKnot_file_index),
       is_fasta(fasta),
-      dangle_mode(dangles) {
+      dangle_mode(dangles),
+      quiet_mode(quiet) {
 #ifdef lpv
         initialize();
 #else
@@ -587,6 +592,7 @@ static inline void rtrim(std::string &s) {
     }).base(), s.end());
 }
 
+#ifndef LP_DISABLE_MAIN
 int main(int argc, char** argv){
 
     struct timeval total_starttime, total_endtime;
@@ -712,7 +718,7 @@ int main(int argc, char** argv){
         replace(rna_seq.begin(), rna_seq.end(), 'T', 'U');
 
         // lhuang: moved inside loop, fixing an obscure but crucial bug in initialization
-        BeamCKYParser parser(beamsize, !sharpturn, is_verbose, bpp_file, bpp_file_index, pf_only, bpp_cutoff, forest_file, mea, MEA_gamma, MEA_file_index, MEA_bpseq, ThreshKnot, ThreshKnot_threshold, ThreshKnot_file_index, shape_file_path, fasta, dangles);
+        BeamCKYParser parser(beamsize, !sharpturn, is_verbose, bpp_file, bpp_file_index, pf_only, bpp_cutoff, forest_file, mea, MEA_gamma, MEA_file_index, MEA_bpseq, ThreshKnot, ThreshKnot_threshold, ThreshKnot_file_index, shape_file_path, fasta, dangles, false);
 
         double ensemble = parser.parse(rna_seq); // ensemble free energy
 
@@ -730,3 +736,4 @@ int main(int argc, char** argv){
 
     return 0;
 }
+#endif // LP_DISABLE_MAIN

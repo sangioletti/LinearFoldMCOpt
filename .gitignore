@@ -1,0 +1,5 @@
+*.txt
+*.svg
+loss_component*
+prob_matrix*
+structure*

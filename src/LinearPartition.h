@@ -13,8 +13,11 @@
 #include <limits>
 #include <vector>
 #include <unordered_map>
-#include <math.h> 
+#include <map>
+#include <math.h>
 #include <set>
+#include <cassert>
+#include <cstddef>
 
 // #define MIN_CUBE_PRUNING_SIZE 20
 #define kT 61.63207755
@@ -116,10 +119,16 @@ public:
                   string threshknot_file_index="",
                   string shape_file_path="",
                   bool is_fasta=false,
-		          int dangles=1);
+		          int dangles=1,
+                  bool quiet=false);
 
     // DecoderResult parse(string& seq);
     double parse(string& seq);
+    size_t sequence_length() const { return seq_length; }
+    const std::unordered_map<pair<int,int>, pf_type, hash_pair>& pair_probs() const { return Pij; }
+    void export_bpp_dense(double* buffer, size_t buffer_len) const;
+    const std::string& get_last_mea_structure() const { return last_mea_structure; }
+    bool quiet() const { return quiet_mode; }
 
 private:
     void get_parentheses(char* result, string& seq);
@@ -158,6 +167,8 @@ private:
     vector<pair<pf_type, int>> scores;
 
     unordered_map<pair<int,int>, pf_type, hash_pair> Pij;
+    bool quiet_mode;
+    std::string last_mea_structure;
 
     void output_to_file(string file_name, const char * type);
     void output_to_file_MEA_threshknot_bpseq(string file_name, const char * type, map<int,int> & pairs, string & seq);

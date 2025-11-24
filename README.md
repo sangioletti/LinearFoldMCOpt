@@ -45,12 +45,75 @@ This will:
 - Compile `bin/linearpartition_c` (CONTRAfold parameters version)
 - Make the `linearpartition` Python script executable
 
+**Available Makefile targets:**
+- `make linearpartition` - Build command-line executables (required)
+- `make liblinearpartition` - Build native shared library (recommended for performance)
+- `make clean` - Remove all compiled binaries and libraries
+- `make all` or `make` - Build both executables and native library
+
 **Note**: You may see some compiler warnings about variable-length arrays. These are safe to ignore and won't affect functionality.
 
 **Troubleshooting**:
 - If `make` is not found, install build-essential (Linux) or Xcode Command Line Tools (macOS)
 - If compilation fails, ensure you have g++ or clang++ installed
 - On macOS, you may need: `xcode-select --install`
+
+### Step 2b: Compile the Native Shared Library (Recommended for Performance)
+
+For optimal performance, especially during optimization runs, you can compile LinearPartition as a native shared library that Python can call directly without spawning subprocesses. This eliminates process creation overhead and significantly speeds up repeated calculations.
+
+**Compile the native library:**
+
+```bash
+make liblinearpartition
+```
+
+This will:
+- Create a `build/` directory for object files
+- Compile `liblinearpartition_v.dylib` (macOS) or `liblinearpartition_v.so` (Linux) - Vienna parameters version
+- The library is automatically detected and used by the Python wrapper when available
+
+**What gets built:**
+- `liblinearpartition_v.dylib` (macOS) or `liblinearpartition_v.so` (Linux) - Native shared library
+- Object files in `build/` directory
+
+**Automatic Usage:**
+The Python wrapper (`linearpartition_wrapper.py`) automatically detects and uses the native library when:
+- Vienna parameters are enabled (`use_vienna=True`, which is the default)
+- The library file exists in the repository root
+- The library can be successfully loaded
+
+If the native library is not available or fails to load, the wrapper automatically falls back to using the command-line executables, so your code will work either way.
+
+**Benefits of Native Library:**
+- **10-100x faster** for repeated calculations (no subprocess overhead)
+- **No verbose output** - suppresses "Free Energy of Ensemble" printouts during optimization
+- **In-process execution** - all calculations happen in the same Python process
+- **Lower memory overhead** - no separate process creation
+
+**Requirements:**
+- Same as Step 2: g++ 4.8.5+ or clang++
+- On macOS: Universal binaries are built (arm64 + x86_64) for compatibility
+- On Linux: Standard shared library (.so) is built
+
+**Troubleshooting Native Library:**
+- **"LinearPartition native library not found"**: Run `make liblinearpartition` to build it
+- **"mach-o file, but is an incompatible architecture"**: Rebuild with `make clean && make liblinearpartition`
+- **Library loads but functions fail**: Check that you're using Vienna parameters (`use_vienna=True`)
+- **To force subprocess mode**: Set environment variable `LINEARPARTITION_NATIVE_LIB=""` or ensure the library file doesn't exist
+
+**Custom Library Path:**
+You can specify a custom library path using the environment variable:
+```bash
+export LINEARPARTITION_NATIVE_LIB=/path/to/liblinearpartition_v.dylib
+python optimise_mRNA.py
+```
+
+**Verify Native Library:**
+```bash
+# Test that native library is being used
+python3 -c "from linearpartition_wrapper import LinearPartitionWrapper; lp = LinearPartitionWrapper(); print('Native client:', lp._native_client is not None)"
+```
 
 ### Step 3: Install Python Dependencies
 
@@ -79,8 +142,11 @@ Test that everything is working:
 # Test LinearPartition directly
 echo "GGGCUCGUAGAUCAGCGGUAGAUCGCUUCCUUCGCAAGGAAGCCCUGGGUUCAAAUCCCAGCGAGUCCACCA" | ./linearpartition -V -p
 
-# Test Python wrapper
+# Test Python wrapper (will use native library if available)
 python3 -c "from linearpartition_wrapper import LinearPartitionWrapper; lp = LinearPartitionWrapper(); print('✓ LinearPartition wrapper works')"
+
+# Check if native library is being used
+python3 -c "from linearpartition_wrapper import LinearPartitionWrapper; lp = LinearPartitionWrapper(); print('Using native library:', lp._native_client is not None)"
 
 # Test mRNA class
 python3 -c "from mRNA import mRNA; from codons import human_aa_to_codon_cai; print('✓ mRNA class works')"
@@ -160,6 +226,7 @@ This script:
 - **Structure Prediction**: Uses MEA (Maximum Expected Accuracy) structure from LinearPartition
 - **Codon Optimization**: Simulated annealing optimization with customizable loss function
 - **Multiple Species Support**: Pre-configured CAI values for human, mouse, rat, yeast, E. coli
+- **Native Library Integration**: Optional in-process native library for 10-100x faster repeated calculations (see Step 2b)
 
 ### Loss Function Components
 
@@ -533,9 +600,15 @@ The `mRNA` class provides high-level functionality for mRNA sequence optimizatio
    - Or modify the script to use a local sequence file
 
 5. **Slow performance**
+   - **Build and use the native library**: Run `make liblinearpartition` for 10-100x speedup
    - Reduce `beamsize` in LinearPartitionWrapper (default 100)
    - Reduce `nsteps` in optimization
    - Use `mfe` instead of `fe` for faster calculations
+
+6. **Native library issues**
+   - **"OSError: dlopen(...) incompatible architecture"**: Rebuild with `make clean && make liblinearpartition`
+   - **Native library not being used**: Ensure `use_vienna=True` (default) and library exists
+   - **To disable native library**: Remove or rename `liblinearpartition_v.dylib`/`.so` - wrapper will fall back to subprocess mode
 
 ---
 
@@ -546,7 +619,8 @@ LinearPartitionStefano/
 ├── README.md                    # This file
 ├── Makefile                     # Build configuration
 ├── linearpartition              # Python wrapper script for LinearPartition
-├── linearpartition_wrapper.py    # Python API wrapper
+├── linearpartition_wrapper.py    # Python API wrapper (auto-uses native library)
+├── linearpartition_native.py     # Native library Python bindings (ctypes)
 ├── mRNA.py                      # Main mRNA optimization class
 ├── optimise_mRNA.py             # Example optimization script
 ├── codons.py                    # Codon tables and CAI data
@@ -554,9 +628,16 @@ LinearPartitionStefano/
 ├── bin/                         # Compiled binaries (created by make)
 │   ├── linearpartition_v        # Vienna parameters version
 │   └── linearpartition_c        # CONTRAfold parameters version
+├── build/                       # Build artifacts (created by make liblinearpartition)
+│   ├── LinearPartition_v.o      # Object files
+│   └── LinearPartitionAPI_v.o   # API object files
+├── liblinearpartition_v.dylib   # Native shared library (macOS, created by make)
+│   # OR liblinearpartition_v.so  # Native shared library (Linux, created by make)
 ├── src/                         # C++ source code
 │   ├── LinearPartition.cpp      # Main implementation
 │   ├── LinearPartition.h        # Header file
+│   ├── LinearPartitionAPI.h     # Native API header (C interface)
+│   ├── LinearPartitionAPI.cpp   # Native API implementation
 │   ├── bpp.cpp                  # Base pair probability calculation
 │   └── Utils/                   # Utility functions
 └── vis_examples/                # Visualization examples

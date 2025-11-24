@@ -2,12 +2,18 @@
 Python wrapper for LinearPartition to calculate partition function and base pair probabilities.
 """
 
-import subprocess
 import os
-import tempfile
 import re
-import numpy as np
+import subprocess
+import tempfile
 from pathlib import Path
+
+import numpy as np
+
+try:
+    from linearpartition_native import LinearPartitionNativeClient
+except Exception:  # pragma: no cover - native library optional
+    LinearPartitionNativeClient = None
 
 
 class LinearPartitionWrapper:
@@ -41,10 +47,21 @@ class LinearPartitionWrapper:
         self.use_vienna = use_vienna
         self.beamsize = beamsize
         self.verbose = verbose
+        self._native_client = None
         
         # Check if executable exists
         if not os.path.exists(self.linearpartition_path):
             raise FileNotFoundError(f"LinearPartition executable not found at {self.linearpartition_path}")
+
+        if use_vienna and LinearPartitionNativeClient is not None:
+            try:
+                self._native_client = LinearPartitionNativeClient(
+                    beamsize=self.beamsize,
+                    no_sharp_turn=True,
+                    verbose=self.verbose,
+                )
+            except Exception:
+                self._native_client = None
     
     def calculate_partition_function(self, sequence):
         """
@@ -56,7 +73,10 @@ class LinearPartitionWrapper:
         Returns:
             float: Ensemble free energy in kcal/mol
         """
-        # Build command
+        if self._native_client is not None and self.use_vienna:
+            return self._native_client.calculate_partition_function(sequence)
+
+        # Build command fallback
         cmd = [self.linearpartition_path, "-b", str(self.beamsize), "-p"]  # -p for partition function only
         if self.use_vienna:
             cmd.append("-V")
@@ -106,6 +126,9 @@ class LinearPartitionWrapper:
         Returns:
             numpy.ndarray: Base pair probability matrix (n x n, 0-indexed)
         """
+        if self._native_client is not None and self.use_vienna:
+            return self._native_client.calculate_bpp_matrix(sequence, cutoff=cutoff)
+
         # Create temporary file for output
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.bpp') as tmp_file:
             tmp_filename = tmp_file.name
@@ -181,6 +204,9 @@ class LinearPartitionWrapper:
                 structure_string: Dot-bracket notation structure
                 ensemble_free_energy: Ensemble free energy in kcal/mol
         """
+        if self._native_client is not None and self.use_vienna:
+            return self._native_client.calculate_mea_structure(sequence, gamma=gamma)
+
         # Build command
         cmd = [self.linearpartition_path, "-b", str(self.beamsize), "-M", "-g", str(gamma)]
         if self.use_vienna:
@@ -265,14 +291,14 @@ class LinearPartitionWrapper:
                 'bpp_matrix': Base pair probability matrix (n x n)
                 'mea_structure': MEA structure in dot-bracket notation
         """
-        # Calculate partition function
-        ensemble_energy = self.calculate_partition_function(sequence)
-        
-        # Calculate BPP matrix
-        bpp_matrix = self.calculate_bpp_matrix(sequence, cutoff=cutoff)
-        
-        # Calculate MEA structure
-        mea_structure, _ = self.calculate_mea_structure(sequence, gamma=gamma)
+        if self._native_client is not None and self.use_vienna:
+            ensemble_energy = self._native_client.calculate_partition_function(sequence)
+            bpp_matrix = self._native_client.calculate_bpp_matrix(sequence, cutoff=cutoff)
+            mea_structure, _ = self._native_client.calculate_mea_structure(sequence, gamma=gamma)
+        else:
+            ensemble_energy = self.calculate_partition_function(sequence)
+            bpp_matrix = self.calculate_bpp_matrix(sequence, cutoff=cutoff)
+            mea_structure, _ = self.calculate_mea_structure(sequence, gamma=gamma)
         
         return {
             'ensemble_energy': ensemble_energy,

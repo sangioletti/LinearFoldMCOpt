@@ -2,6 +2,7 @@
 # the codon usage of an mRNA sequence. 
 
 import numpy as np
+import time
 from codons import *
 from linearpartition_wrapper import LinearPartitionWrapper
 
@@ -960,6 +961,16 @@ class mRNA:
             # If it's already a file object, write to it
             output_file.write(line)
             output_file.flush()
+        
+        # Save codon sequence to sequence_{step}.txt
+        sequence_filename = f"sequence_{step}.txt"
+        try:
+            with open(sequence_filename, 'w') as f:
+                # Write the codon sequence as space-separated codons
+                codon_sequence = ' '.join(self.codons)
+                f.write(codon_sequence + '\n')
+        except Exception as e:
+            print(f"Warning: Could not save codon sequence to {sequence_filename}: {e}")
 
     def save_prob_matrix(self, step):
         """
@@ -1290,6 +1301,10 @@ class mRNA:
         T_schedule = T_opt * np.linspace(1, 0, nsteps)
         loss = self.loss
         
+        # Record start time for timing estimates
+        start_time = time.time()
+        first_n_sample_time = None
+        
         # Set n_sample default to sample_frequency if not provided
         if n_sample is None:
             n_sample = sample_frequency
@@ -1429,6 +1444,35 @@ class mRNA:
                     self.save_statistics(i, acceptance_rate, output_filename)
                 except Exception as e:
                     print(f"Error saving statistics at step {i}: {e}")
+                
+                # Calculate and display timing information
+                current_time = time.time()
+                elapsed_time = current_time - start_time
+                elapsed_hours = elapsed_time / 3600.0
+                
+                # Record time after first n_sample steps to calculate rate
+                if first_n_sample_time is None and current_step >= n_sample:
+                    first_n_sample_time = current_time
+                    time_per_n_sample = first_n_sample_time - start_time
+                elif first_n_sample_time is not None:
+                    # Use the rate from the first n_sample steps
+                    time_per_n_sample = first_n_sample_time - start_time
+                else:
+                    # Not enough steps yet, estimate based on current progress
+                    time_per_n_sample = elapsed_time / max(1, current_step)
+                
+                # Calculate estimated time to complete
+                if current_step > 0:
+                    steps_remaining = nsteps - current_step
+                    # Estimate based on time per step from first n_sample steps
+                    time_per_step = time_per_n_sample / n_sample
+                    estimated_time_remaining = time_per_step * steps_remaining
+                    estimated_time_remaining_hours = estimated_time_remaining / 3600.0
+                    print(f"Time elapsed: {elapsed_hours:.4f} hours ({elapsed_time:.1f} seconds)")
+                    if steps_remaining > 0:
+                        print(f"Estimated time to complete: {estimated_time_remaining_hours:.4f} hours ({estimated_time_remaining:.1f} seconds)")
+                else:
+                    print(f"Time elapsed: {elapsed_hours:.4f} hours ({elapsed_time:.1f} seconds)")
                 
 
             # Save probability matrix and structure less frequently (every sample_frequency * 10 steps)
