@@ -1,0 +1,1 @@
+# Step	Acceptance_Rate	Sequence_Identity_%	CAI	Free_Energy	CpG	Stem	UTR_Hybridisation	Initial_Hybridisation

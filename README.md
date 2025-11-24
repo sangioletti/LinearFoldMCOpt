@@ -10,20 +10,200 @@ He Zhang, Liang Zhang, David Mathews, Liang Huang*
 
 Web server: http://linearfold.org/partition
 
+---
 
-## Dependencies
-gcc 4.8.5 or above; 
-python2.7
-LaTex for drawing circular plot
-numpy, pandas, seaborn and matplotlib for drawing heatmap plot
+## Installation and Setup
 
-## To Compile
+This repository includes both the LinearPartition C++ code and Python wrappers for mRNA codon optimization. Follow these steps to install and set up the environment.
+
+### System Requirements
+
+- **C++ Compiler**: g++ 4.8.5 or above (or clang++)
+- **Python**: Python 3.6 or above
+- **Operating System**: Linux, macOS, or Windows (with appropriate tools)
+
+### Step 1: Clone or Download the Repository
+
+```bash
+cd /path/to/your/directory
+# If using git:
+git clone <repository-url>
+cd LinearPartitionStefano
 ```
-make
+
+### Step 2: Compile the C++ LinearPartition Binaries
+
+The Python wrapper requires the compiled LinearPartition executables. Compile them using:
+
+```bash
+make linearpartition
 ```
 
-## To Run
-LinearPartition can be run with:
+This will:
+- Create a `bin/` directory
+- Compile `bin/linearpartition_v` (Vienna parameters version)
+- Compile `bin/linearpartition_c` (CONTRAfold parameters version)
+- Make the `linearpartition` Python script executable
+
+**Note**: You may see some compiler warnings about variable-length arrays. These are safe to ignore and won't affect functionality.
+
+**Troubleshooting**:
+- If `make` is not found, install build-essential (Linux) or Xcode Command Line Tools (macOS)
+- If compilation fails, ensure you have g++ or clang++ installed
+- On macOS, you may need: `xcode-select --install`
+
+### Step 3: Install Python Dependencies
+
+Install the required Python packages:
+
+```bash
+pip install numpy
+```
+
+**Optional dependencies** (for advanced features):
+- `biotite` - For downloading PDB sequences in `optimise_mRNA.py`
+  ```bash
+  pip install biotite
+  ```
+- `pandas`, `seaborn`, `matplotlib` - For visualization scripts
+  ```bash
+  pip install pandas seaborn matplotlib
+  ```
+- `LaTeX` - For drawing circular plots (system-level installation required)
+
+### Step 4: Verify Installation
+
+Test that everything is working:
+
+```bash
+# Test LinearPartition directly
+echo "GGGCUCGUAGAUCAGCGGUAGAUCGCUUCCUUCGCAAGGAAGCCCUGGGUUCAAAUCCCAGCGAGUCCACCA" | ./linearpartition -V -p
+
+# Test Python wrapper
+python3 -c "from linearpartition_wrapper import LinearPartitionWrapper; lp = LinearPartitionWrapper(); print('✓ LinearPartition wrapper works')"
+
+# Test mRNA class
+python3 -c "from mRNA import mRNA; from codons import human_aa_to_codon_cai; print('✓ mRNA class works')"
+```
+
+---
+
+## Usage: mRNA Codon Optimization
+
+The main functionality is provided through the `mRNA` class in `mRNA.py`, which uses LinearPartition for RNA folding calculations.
+
+### Quick Start Example
+
+```python
+from mRNA import mRNA
+from codons import human_aa_to_codon_cai
+import numpy as np
+
+# Define your nucleotide sequence (must be divisible by 3, contain AUG start codon)
+sequence = "AUGAAACCCGGGUUUAAGGCGGCGGAGGACGGGUAA"
+
+# Set loss function weights
+weights = {
+    'mfe': 1.0,      # Minimum free energy
+    'fe': 0.0,       # Ensemble free energy (use either mfe or fe, not both)
+    'cai': 1.0,      # Codon Adaptation Index
+    'cpg': 1.0,      # CpG dinucleotide count
+    'stem': 0.0,     # Stem length penalty
+    'utr_hybridisation': 0.0,
+    'initial_hybridisation': 0.0,
+}
+
+# Create mRNA object
+system = mRNA(
+    sequence=sequence,
+    species='human',  # Options: 'human', 'mouse', 'rat', 'yeast', 'e_coli', 'other'
+    aa_to_codon_cai=human_aa_to_codon_cai,
+    loss_weights=weights,
+    T_K=310,  # Temperature in Kelvin
+    verbose=False
+)
+
+# Calculate properties
+print(f"Free energy: {system.free_energy}")
+print(f"Structure: {system.structure}")
+print(f"CAI: {np.exp(system.calculate_CAI_log)}")
+
+# Run optimization
+system.optimize_codon_usage(
+    T_opt=0.3,           # Initial temperature for simulated annealing
+    nsteps=100,          # Number of optimization steps (multiplied by number of codons)
+    sample_frequency=10, # Frequency of progress output
+    output_filename="opt_statistics.txt"
+)
+```
+
+### Running the Example Script
+
+The `optimise_mRNA.py` script demonstrates optimization of a protein sequence:
+
+```bash
+python3 optimise_mRNA.py
+```
+
+This script:
+1. Downloads a protein sequence from PDB (requires `biotite`)
+2. Converts it to a nucleotide sequence
+3. Optimizes codon usage using simulated annealing
+4. Saves statistics and results
+
+**Note**: Requires internet connection for PDB download on first run.
+
+### Key Features
+
+- **Partition Function Calculation**: Uses LinearPartition for fast ensemble free energy calculation
+- **Base Pair Probability Matrix**: Computes full BPP matrix for structure analysis
+- **Structure Prediction**: Uses MEA (Maximum Expected Accuracy) structure from LinearPartition
+- **Codon Optimization**: Simulated annealing optimization with customizable loss function
+- **Multiple Species Support**: Pre-configured CAI values for human, mouse, rat, yeast, E. coli
+
+### Loss Function Components
+
+The optimization minimizes a weighted loss function with these components:
+
+- `mfe`: Minimum free energy (per codon, normalized)
+- `fe`: Ensemble free energy (per codon, normalized) - alternative to mfe
+- `cai`: Negative log of Codon Adaptation Index (higher CAI = better)
+- `cpg`: Count of CpG dinucleotides
+- `stem`: Penalty for long stems (>30 bp)
+- `utr_hybridisation`: Hybridization probability in UTR region
+- `initial_hybridisation`: Hybridization probability in initial region
+
+### Output Files
+
+During optimization, the following files are created:
+
+- `opt_statistics.txt`: Step-by-step statistics (step, acceptance rate, sequence identity)
+- `loss_components.{step}`: Detailed loss component values at each sampling step
+- `prob_matrix.{step}`: Base pair probability matrices (if enabled)
+- `structure.{step}`: Secondary structures in dot-bracket notation (if enabled)
+- `structure.{step}.svg.txt`: Structure files for visualization (if enabled)
+
+---
+
+## Dependencies (Detailed)
+
+### C++ Dependencies
+- **g++** 4.8.5 or above (or clang++)
+- **Make** utility
+
+### Python Dependencies
+- **numpy**: Required for numerical operations
+- **biotite**: Optional, for PDB sequence download
+- **pandas, seaborn, matplotlib**: Optional, for visualization
+
+### System Dependencies (Optional)
+- **LaTeX**: For circular plot generation
+
+---
+
+## LinearPartition Command-Line Usage
+
+LinearPartition can be run directly from the command line:
 ```
 echo SEQUENCE | ./linearpartition [OPTIONS]
 
@@ -277,9 +457,123 @@ cat ecoli_tRNA_bpp | ./draw_heatmap 76
 ```
 <img src="./vis_examples/heatmap.png" width="400">
 
-References
--------------
+---
 
+## Python API Reference
+
+### LinearPartitionWrapper Class
+
+The `linearpartition_wrapper.py` module provides a Python interface to LinearPartition:
+
+```python
+from linearpartition_wrapper import LinearPartitionWrapper
+
+# Initialize wrapper
+lp = LinearPartitionWrapper(
+    linearpartition_path=None,  # Auto-detects if None
+    use_vienna=True,            # Use Vienna parameters
+    beamsize=100,               # Beam size
+    verbose=False
+)
+
+# Calculate partition function
+energy = lp.calculate_partition_function(sequence)
+
+# Calculate base pair probability matrix
+bpp_matrix = lp.calculate_bpp_matrix(sequence, cutoff=0.0)
+
+# Calculate MEA structure
+structure, energy = lp.calculate_mea_structure(sequence, gamma=3.0)
+
+# Calculate all at once
+results = lp.calculate_all(sequence)
+```
+
+### mRNA Class
+
+The `mRNA` class provides high-level functionality for mRNA sequence optimization:
+
+**Key Properties**:
+- `sequence`: The nucleotide sequence string
+- `codons`: Array of codons
+- `free_energy`: Ensemble free energy (normalized per codon)
+- `mfe`: Minimum free energy approximation (normalized per codon)
+- `structure`: Secondary structure in dot-bracket notation
+- `prob_matrix`: Base pair probability matrix (n×n numpy array)
+- `loss`: Current loss function value
+
+**Key Methods**:
+- `optimize_codon_usage()`: Run simulated annealing optimization
+- `propose_codon_mutation()`: Propose a single codon mutation
+- `reset()`: Reset cached calculations
+- `visualize_structure()`: Save structure for visualization
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"LinearPartition executable not found"**
+   - Ensure you've run `make linearpartition`
+   - Check that `bin/linearpartition_v` and `bin/linearpartition_c` exist
+   - Verify the `linearpartition` Python script is executable
+
+2. **"ImportError: No module named 'codons'"**
+   - Ensure you're running Python from the repository directory
+   - Check that `codons.py` exists in the current directory
+
+3. **Compilation errors**
+   - Ensure you have g++ or clang++ installed
+   - On macOS, install Xcode Command Line Tools: `xcode-select --install`
+   - On Linux, install build-essential: `sudo apt-get install build-essential`
+
+4. **"biotite not found" (for optimise_mRNA.py)**
+   - Install biotite: `pip install biotite`
+   - Or modify the script to use a local sequence file
+
+5. **Slow performance**
+   - Reduce `beamsize` in LinearPartitionWrapper (default 100)
+   - Reduce `nsteps` in optimization
+   - Use `mfe` instead of `fe` for faster calculations
+
+---
+
+## File Structure
+
+```
+LinearPartitionStefano/
+├── README.md                    # This file
+├── Makefile                     # Build configuration
+├── linearpartition              # Python wrapper script for LinearPartition
+├── linearpartition_wrapper.py    # Python API wrapper
+├── mRNA.py                      # Main mRNA optimization class
+├── optimise_mRNA.py             # Example optimization script
+├── codons.py                    # Codon tables and CAI data
+├── gflags.py                    # Command-line flag parsing
+├── bin/                         # Compiled binaries (created by make)
+│   ├── linearpartition_v        # Vienna parameters version
+│   └── linearpartition_c        # CONTRAfold parameters version
+├── src/                         # C++ source code
+│   ├── LinearPartition.cpp      # Main implementation
+│   ├── LinearPartition.h        # Header file
+│   ├── bpp.cpp                  # Base pair probability calculation
+│   └── Utils/                   # Utility functions
+└── vis_examples/                # Visualization examples
+```
+
+---
+
+## References
+
+**LinearPartition Paper**:
+[LinearPartition: linear-time approximation of RNA folding partition function and base-pairing probabilities](https://academic.oup.com/bioinformatics/article/36/Supplement_1/i258/5870487). Bioinformatics, Volume 36, Issue Supplement_1, July 2020, Pages i258–i267. ISMB 2020
+
+He Zhang, Liang Zhang, David Mathews, Liang Huang*
+
+**ThreshKnot Paper**:
 Liang Zhang, He Zhang, David H Mathews, and Liang Huang\*. Threshknot: Thresholded probknot for improved RNA secondary structure prediction. arXiv preprint arXiv:1912.12796.
 
 \* corresponding author
+
+**Web Server**: http://linearfold.org/partition
