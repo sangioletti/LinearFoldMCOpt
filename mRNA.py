@@ -19,6 +19,8 @@ class mRNA:
         initial_region_end_index = None,
         beamsize = 100,
         bpp_cutoff = 0.0,
+        start_from_optimal_cai = False,
+        first_mutable_codon = 0,
         ):
         # Retrieve codon adaptation index dictionary for the species
         assert species in ['human', 'mouse', 'rat', 'yeast', 'e_coli', 'other'], "Invalid species"
@@ -54,6 +56,10 @@ class mRNA:
 
         self.initial_aminoacid = self.codons_to_amino_acids()
         self._initial_codons = self.codons.copy()  # Store initial codon sequence for statistics
+        print(f"Initial codon sequence: {self._initial_codons}")
+        if start_from_optimal_cai:
+            print(f"Changing the sequence to start from optimal CAI")
+            self.start_from_optimal_cai()
         self._species = species
         self.aa_to_codon_cai = aa_to_codon_cai
         self.verbose = verbose
@@ -1518,7 +1524,19 @@ class mRNA:
         
         print(f"Final loss: {loss}, mfe: {self.mfe}, cai: {np.exp(self.calculate_CAI_log)}")
         print(f"Statistics saved to {output_filename}")
-            
+
+    def start_from_optimal_cai(self):
+        """
+        For the initial sequence, start from the optimal CAI.
+        Only change though the part that is mutable
+        """
+        # Replace each codon with the most frequent codon for the amino acid,
+        # i.e. the one for which CAI is highest.
+        for i, cod in enumerate(self.codons):
+            if i >= self.first_mutable_codon:
+                amino_acid = codon_to_amino_acid_3L(cod)
+                most_frequent_codon = max(self.aa_to_codon_cai[amino_acid], key=self.aa_to_codon_cai[amino_acid].get)
+                self.codons[i] = most_frequent_codon
         return 
 
 if __name__ == "__main__":
