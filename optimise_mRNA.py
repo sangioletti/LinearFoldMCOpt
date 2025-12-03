@@ -56,10 +56,10 @@ weights = {
                 #'mfe': 1.0, 
                 'cai': 10.0, 
                 'fe': 1.0, 
-                'cpg': 5.0, 
-                'stem': 10.0, 
-                'utr_hybridisation': 10.0, 
-                'initial_hybridisation': 10.0, 
+                'cpg': 3.0, 
+                'stem': 3.0, 
+                'utr_hybridisation': 3.0, 
+                'initial_hybridisation': 3.0, 
                 #'restriction_sites': 0.0 
                 }
 system = mRNA( 
@@ -77,8 +77,8 @@ system = mRNA(
 print(f"Sequence length: {len(sequence)}")
 print(f"McCaskill free-energy (*codon): {system.free_energy} kcal/mol per codon")
 system.optimize_codon_usage( 
-    T_opt=0.3, 
-    nsteps=1000, 
+    T_opt=0.01, 
+    nsteps=100, 
     sample_frequency = 100, 
     verbose = False,
     output_filename = "opt_statistics.txt",

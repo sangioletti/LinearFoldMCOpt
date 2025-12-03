@@ -1699,7 +1699,7 @@ def plot_optimization_statistics(statistics_file="opt_statistics.txt", output_fi
     # Plot 1: Acceptance Rate
     if 'Acceptance_Rate' in data and len(data['Acceptance_Rate']) > 0:
         ax = axes[plot_idx]
-        ax.plot(steps, data['Acceptance_Rate'], 'b-', linewidth=2, marker='o', markersize=4)
+        ax.plot(steps, data['Acceptance_Rate'], 'bo', linestyle='none', markersize=4)
         ax.set_xlabel('Step', fontsize=11)
         ax.set_ylabel('Acceptance Rate', fontsize=11)
         ax.set_title('Acceptance Rate Over Optimization', fontsize=12, fontweight='bold')
@@ -1710,7 +1710,7 @@ def plot_optimization_statistics(statistics_file="opt_statistics.txt", output_fi
     # Plot 2: Sequence Identity
     if 'Sequence_Identity_%' in data and len(data['Sequence_Identity_%']) > 0:
         ax = axes[plot_idx]
-        ax.plot(steps, data['Sequence_Identity_%'], 'g-', linewidth=2, marker='s', markersize=4)
+        ax.plot(steps, data['Sequence_Identity_%'], 'gs', linestyle='none', markersize=4)
         ax.set_xlabel('Step', fontsize=11)
         ax.set_ylabel('Sequence Identity (%)', fontsize=11)
         ax.set_title('Sequence Identity Over Optimization', fontsize=12, fontweight='bold')
@@ -1727,7 +1727,7 @@ def plot_optimization_statistics(statistics_file="opt_statistics.txt", output_fi
             values = np.array(data[component])
             
             # Handle different scales - some might be very small (scientific notation)
-            ax.plot(steps, values, color=color, linewidth=2, marker='.', markersize=4, label=component)
+            ax.plot(steps, values, color=color, marker='.', linestyle='none', markersize=4, label=component)
             ax.set_xlabel('Step', fontsize=11)
             ax.set_ylabel(component, fontsize=11)
             ax.set_title(f'{component} Over Optimization', fontsize=12, fontweight='bold')
