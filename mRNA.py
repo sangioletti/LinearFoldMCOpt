@@ -21,6 +21,7 @@ class mRNA:
         bpp_cutoff = 0.0,
         start_from_optimal_cai = False,
         first_mutable_codon = 0,
+        codon_mutability : np.ndarray = None,
         ):
         # Retrieve codon adaptation index dictionary for the species
         assert species in ['human', 'mouse', 'rat', 'yeast', 'e_coli', 'other'], "Invalid species"
@@ -56,6 +57,14 @@ class mRNA:
 
         self.initial_aminoacid = self.codons_to_amino_acids()
         self._initial_codons = self.codons.copy()  # Store initial codon sequence for statistics
+
+        if codon_mutability is None:
+                codon_mutability = np.ones(len(self.codons))
+        if not modify_utr:
+            for i in range(self.utr_index_range[1]+1):
+                    codon_mutability[i] = 0 
+        self.codon_mutability = codon_mutability
+
         print(f"Initial codon sequence: {self._initial_codons}")
         if start_from_optimal_cai:
             print(f"Changing the sequence to start from optimal CAI")
@@ -119,10 +128,8 @@ class mRNA:
         return amino_acids
 
     def propose_codon_mutation(self):
-        if self.modify_utr:
-            index = np.random.randint(0, len(self.codons))
-        else:
-            index = np.random.randint(self.utr_index_range[1]+1, len(self.codons))
+        index_modifiable_codons = np.where(self.codon_mutability)[0]
+        index = np.random.choice(index_modifiable_codons)
         current_codon = self.codons[index]
         current_amino_acid = codon_table[current_codon]
         possible_codons = list(self.aa_to_codon_cai[current_amino_acid].keys())
@@ -1533,7 +1540,7 @@ class mRNA:
         # Replace each codon with the most frequent codon for the amino acid,
         # i.e. the one for which CAI is highest.
         for i, cod in enumerate(self.codons):
-            if i >= self.first_mutable_codon:
+            if self.codon_mutability[i]:
                 amino_acid = codon_to_amino_acid_3L(cod)
                 most_frequent_codon = max(self.aa_to_codon_cai[amino_acid], key=self.aa_to_codon_cai[amino_acid].get)
                 self.codons[i] = most_frequent_codon
