@@ -188,32 +188,6 @@ amino_acid_to_1_letter = {
 
 amino_acid_1L_to_full_name = {short: full for full, short in amino_acid_to_1_letter.items()}
 
-def codon_to_amino_acid_3L(codon):
-    return amino_acid_to_1_letter[codon_table[codon]]
-
-def codon_to_amino_acid_1L(codon):
-    return amino_acid_to_1_letter[codon_table[codon]]
-
-def aa_3L_to_codons(amino_acid):
-    try:
-        assert len(amino_acid) == 3, "Amino acid in 3-letter code expected"
-    except AssertionError:
-        assert amino_acid == "Stop", "Amino acid must be a 3-letter code"
-        raise ValueError
-    # Transform 3-letter code to full name
-    amino_acid = amino_acid_3L_to_full_name[amino_acid]
-    return tuple(codon for codon, aa in codon_table.items() if aa == amino_acid)
-
-def aa_1L_to_codons(amino_acid):
-    try:
-        assert len(amino_acid) == 1, "Amino acid in 1-letter code expected"
-    except AssertionError:
-        assert amino_acid == "Stop", "Amino acid must be a 1-letter code"
-        raise ValueError
-    # Transform 1-letter code to full name
-    amino_acid = amino_acid_1L_to_full_name[amino_acid]
-    return tuple(codon for codon, aa in codon_table.items() if aa == amino_acid)
-
 # Codon Adaptation Index (CAI) for Humans
 # Values normalized so the most preferred codon for each amino acid = 1.0
 # Based on codon usage in highly expressed human genes
@@ -457,3 +431,5 @@ ecoli_aa_to_codon_cai = {
     amino_acid: {codon: ecoli_cai[codon] for codon in codons}
     for amino_acid, codons in aminoacid_to_codon_table.items()
 }
+
+restriction_sites = {'Sbf1':'CCTGCAGG','Nhe1':'GCTAGC','Age1':'ACCGGT'}

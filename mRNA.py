@@ -5,6 +5,7 @@ import numpy as np
 import time
 from codons import *
 from linearpartition_wrapper import LinearPartitionWrapper
+from utils import *
 
 class mRNA:
     def __init__(
@@ -14,7 +15,8 @@ class mRNA:
         aa_to_codon_cai:dict, 
         loss_weights:dict = {'mfe': 1.0, 'cai': 1.0},
         T_K = 310, 
-        modify_utr = False,
+        modify_fivep_utr = False,
+        modify_threep_utr = False,
         verbose = False,
         initial_region_end_index = None,
         beamsize = 100,
@@ -57,10 +59,23 @@ class mRNA:
         self.initial_aminoacid = self.codons_to_amino_acids()
         self._initial_codons = self.codons.copy()  # Store initial codon sequence for statistics
 
+        # Initialize UTR attributes BEFORE codon_mutability code accesses them
+        self._fivep_utr_index_range = None
+        self._fivep_utr_sequence = None
+        self._threep_utr_index_range = None
+        self._threep_utr_sequence = None
+        self.retrieve_fivep_utr()  # Must be called before codon_mutability checks
+        self.retrieve_threep_utr()  # Must be called before codon_mutability checks
+
         if codon_mutability is None:
                 codon_mutability = np.ones(len(self.codons))
-        if not modify_utr:
-            for i in range(self.utr_index_range[1]+1):
+        if not modify_fivep_utr:
+            for i in range(self.fivep_utr_index_range[1]+1):
+                    codon_mutability[i] = 0 
+        if not modify_threep_utr:
+            first_index = self.threep_utr_index_range[0]
+            last_index = self.threep_utr_index_range[1]
+            for i in range(first_index, last_index+1):
                     codon_mutability[i] = 0 
         self.codon_mutability = codon_mutability
 
@@ -68,10 +83,12 @@ class mRNA:
         self._species = species
         self.aa_to_codon_cai = aa_to_codon_cai
 
-        print(f"Initial codon sequence: {self._initial_codons}")
         if start_from_optimal_cai:
-            print(f"Changing the sequence to start from optimal CAI")
             self.start_from_optimal_cai()
+            print(f"Initial (Optimal CAI) codon sequence: {self._initial_codons}")
+        else:
+            print(f"Initial (Random) codon sequence: {self._initial_codons}")
+
         self.verbose = verbose
         self.RT = 0.001987 * T_K  # kcal/(mol*K) * K
         self._minimum_folding_energy = None
@@ -95,12 +112,11 @@ class mRNA:
         self._linearpartition = LinearPartitionWrapper(use_vienna=True, beamsize=beamsize, verbose=verbose)
         self._bpp_cutoff = bpp_cutoff  # BPP cutoff - can be increased to speed up BPP calculation
         self._pf_computed = False  # Track if partition function has been computed
-        self._utr_index_range = None
-        self._utr_sequence = None
-        self.retrieve_utr() # This will initialize self.utr_index_range and self.utr_sequence
+        # Note: _fivep_utr and _threep_utr attributes already initialized above (before codon_mutability)
         self._largest_stem = None
         self.set_largest_stem() # This will initialize self.largest_stem and self.largest_stem_length
-        self.modify_utr = modify_utr
+        self.modify_fivep_utr = modify_fivep_utr
+        self.modify_threep_utr = modify_threep_utr
         self._skip_svg = False  # SVG format is now used (may cause segfaults in some ViennaRNA versions)
         self._use_average_stem_length = False  # Flag to use average stem length from ensemble vs longest stem from MFE
         self._cached_average_stem_length = None  # Cache for average stem length
@@ -109,16 +125,41 @@ class mRNA:
     @property
     def sequence(self):
         return ''.join(self.codons)
+
+    @property
+    def n_nucleotides(self):
+        return len(self.codons)
     
     def validate_weights(self):
         all_keys = set(self._loss_weights.keys())
+        valid_keys = ['mfe', 'fe', 'cai', 'cpg', 'stem', 'threep_utr_hybridisation', 
+                      'fivep_utr_hybridisation', 'initial_hybridisation', 'restriction_sites', 'kozak']
         for k in all_keys:
-            if k not in ['mfe', 'fe', 'cai','cpg', 'stem', 'utr_hybridisation', 'initial_hybridisation', 'restriction_sites']: 
-                raise ValueError(f"Invalid loss weight key: {k}")
+            if k not in valid_keys: 
+                raise ValueError(f"Invalid loss weight key: {k}. Valid keys are: {valid_keys}")
         
         if self._loss_weights.get('mfe',0.0) != 0.0 and self._loss_weights.get('fe',0.0) != 0.0:
             raise ValueError("Only one of mfe or fe can be non-zero")
         return
+
+    def _kozak_penalty(self):
+        # kozak_sequence = GCC(A/G)CCATG
+        # we accept defects in the first two positions,
+        # but still penalise them
+        kozak = ['CACCATG','CGCCATG']
+        present = False
+        penalty = 0.0
+        fivep_utr_sequence = self.fivep_utr_sequence
+        for seq in kozak:
+            # Take the last 10 nucleotides of the 5' UTR
+            count = fivep_utr_sequence[-10:].count(seq)
+        if count == 0:
+            penalty += np.inf
+        else:
+            if fivep_utr_sequence[-10:-7] != 'GCC':
+                penalty += 1.0
+            present = True
+        return penalty, present 
 
 
     def codons_to_amino_acids(self):
@@ -161,13 +202,20 @@ class mRNA:
             self._pf_computed = False
         return
 
-    def calculate_CAI(self, form = 'log'):
+    def calculate_CAI(self, form = 'log', normalise = False):
         if form == 'log':
-            return self.calculate_CAI_log
+            if normalise:
+                result = self.calculate_CAI_log/len(self.codons)
+            else:
+                result = self.calculate_CAI_log
         elif form == 'linear':
-            return np.exp(self.calculate_CAI_log)
+            if normalise:
+                result = np.exp(self.calculate_CAI_log/len(self.codons))
+            else:
+                result = np.exp(self.calculate_CAI_log)
         else:
             raise ValueError("Invalid form")
+        return result
 
     @property
     def calculate_CAI_log(self):
@@ -186,7 +234,7 @@ class mRNA:
             valid = ( cai_values > 0 ).all()
             if not valid:
                 raise ValueError(f"Some codons have a CAI of 0: {codon_arr[cai_values <= 0]}")
-            self._cai_log = np.mean(np.log(cai_values))
+            self._cai_log = np.log(cai_values).sum()
             # Note: _codons_changed is reset in codons_string property
 
         return self._cai_log
@@ -219,7 +267,7 @@ class mRNA:
                 
                 # Use ensemble free energy as MFE approximation
                 # Convert from kcal/mol to normalized units
-                self._minimum_folding_energy = ensemble_energy / self.RT / len(self.codons)
+                self._minimum_folding_energy = ensemble_energy / self.RT 
                 
                 # Validate structure length
                 if len(self._structure) != len(seq):
@@ -272,12 +320,12 @@ class mRNA:
                 if not self._pf_computed:
                     ensemble_energy = self._linearpartition.calculate_partition_function(seq)
                     # Convert from kcal/mol to normalized units
-                    self._free_energy = ensemble_energy / self.RT / len(self.codons)
+                    self._free_energy = ensemble_energy / self.RT 
                     self._pf_computed = True
                 else:
                     # If pf was already computed, we need to recompute it (shouldn't happen often)
                     ensemble_energy = self._linearpartition.calculate_partition_function(seq)
-                    self._free_energy = ensemble_energy / self.RT / len(self.codons)
+                    self._free_energy = ensemble_energy / self.RT 
                 
                 # Cache sequence hash
                 self._cached_seq_hash = seq_hash
@@ -430,9 +478,12 @@ class mRNA:
                 self._cached_structure_seq_hash = None
             # Reset partition function computation flag
             self._pf_computed = False
-            if self.modify_utr:
-                self._utr_index_range = None
-                self._utr_sequence = None
+            if self.modify_fivep_utr:
+                self._fivep_utr_index_range = None
+                self._fivep_utr_sequence = None
+            if self.modify_threep_utr:
+                self._threep_utr_index_range = None
+                self._threep_utr_sequence = None
         else:
             # Selective reset based on what's needed
             if isinstance(what, str):
@@ -512,6 +563,14 @@ class mRNA:
     @property
     def loss(self) -> float:
         loss = 0.0
+        # This is a sanity check. If the kozak sequence is not present, the loss is infinite.
+        # the sequence must be considered invalid
+        kozak_present, penalty = self._kozak_penalty()
+        if not kozak_present:
+            raise ValueError("Kozak sequence is not present")
+        else:
+            w_kozak = self._loss_weights.get('kozak', 0.0)
+            loss += w_kozak * penalty 
         w_cai = self._loss_weights.get('cai', 0.0)
         if w_cai != 0.0:
             loss += -w_cai * self.calculate_CAI_log
@@ -527,9 +586,12 @@ class mRNA:
         w_stem = self._loss_weights.get('stem', 0.0)
         if w_stem != 0.0:
             loss += w_stem * self.stem_penalty 
-        w_utr = self._loss_weights.get('utr_hybridisation', 0.0)
-        if w_utr != 0.0:
-            loss += w_utr * self.utr_hybridisation_penalty
+        w_fivep_utr = self._loss_weights.get('fivep_utr_hybridisation', 0.0)
+        if w_fivep_utr != 0.0:
+            loss += w_fivep_utr * self.fivep_utr_hybridisation_penalty
+        w_threep_utr = self._loss_weights.get('threep_utr_hybridisation', 0.0)
+        if w_threep_utr != 0.0:
+            loss += w_threep_utr * self.threep_utr_hybridisation_penalty
         w_hairpin = self._loss_weights.get('initial_hybridisation', 0.0)
         if w_hairpin != 0.0:
             loss += w_hairpin * self.initial_hybridisation_penalty
@@ -566,8 +628,12 @@ class mRNA:
             raise
 
     @property
-    def utr_hybridisation_penalty(self):
-        return self.hybridisation_penalty(self.utr_index_range[0], self.utr_index_range[1])
+    def fivep_utr_hybridisation_penalty(self):
+        return self.hybridisation_penalty(self.fivep_utr_index_range[0], self.fivep_utr_index_range[1])
+
+    @property
+    def threep_utr_hybridisation_penalty(self):
+        return self.hybridisation_penalty(self.threep_utr_index_range[0], self.threep_utr_index_range[1])
 
     @property
     def initial_hybridisation_penalty(self):
@@ -628,7 +694,7 @@ class mRNA:
             print(f"Warning: Error computing hybridisation_penalty: {e}")
             return 0.0
 
-    def retrieve_utr(self):
+    def retrieve_fivep_utr(self):
         """Find the UTR of the mRNA sequence, corresponding to the 5'UTR until the start codon
         appears.
         """
@@ -643,14 +709,25 @@ class mRNA:
             raise ValueError( "Start codon not found in the sequence" )
 
         self._start_index = start_index
-        self._utr_sequence = self.codons[:start_index]
-        self._utr_index_range = (0, start_index - 1)
-        return
+        self._fivep_utr_index_range = (0, start_index - 1)
+        self._fivep_utr_sequence = self.codons_string[:start_index]
+        return self._fivep_utr_index_range
+    
+    def retrieve_threep_utr(self):
+        """Find the 3 UTR of the mRNA sequence, corresponding to the region after the stop codon"""
+        # Use _stop_index if already computed, otherwise call stop_index()
+        if not hasattr(self, '_stop_index') or self._stop_index is None:
+            stop_idx = self.stop_index()
+        else:
+            stop_idx = self._stop_index
+        self._threep_utr_index_range = (stop_idx + 1, len(self.codons) - 1)
+        self._threep_utr_sequence = self.codons_string[(stop_idx + 1) * 3:]  # 3 nucleotides per codon
+        return self._threep_utr_index_range
 
     @property
     def start_index(self):
         if self._start_index is None:
-            self.retrieve_utr()
+            self.retrieve_fivep_utr()
         return self._start_index
 
     @start_index.setter
@@ -666,7 +743,7 @@ class mRNA:
         stop_indices = indices[ mask ]
         try:
             if len( stop_indices ) > 1:
-                print( "WARNING: Multiple stop codons found in the sequence")
+                raise ValueError( "Multiple stop codons found in the sequence" )
             _stop_index = stop_indices[0]
             assert _stop_index > self.start_index, "Stop codon found before start codon"
             print( f"Stop codon found at index {_stop_index}" )
@@ -676,18 +753,32 @@ class mRNA:
         return _stop_index
 
     @property
-    def utr_index_range(self):
+    def fivep_utr_index_range(self):
         """Return the index range of the UTR of the mRNA sequence."""
-        if self._utr_index_range is None:
-            self.retrieve_utr()
-        return self._utr_index_range
+        if self._fivep_utr_index_range is None:
+            self.retrieve_fivep_utr()
+        return self._fivep_utr_index_range
 
     @property
-    def utr_sequence(self):
+    def fivep_utr_sequence(self):
         """Return the sequence of the UTR of the mRNA sequence."""
-        if self._utr_sequence is None:
-            self.retrieve_utr()
-        return self._utr_sequence
+        if self._fivep_utr_sequence is None:
+            self.retrieve_fivep_utr()
+        return self._fivep_utr_sequence
+    
+    @property
+    def threep_utr_index_range(self):
+        """Return the index range of the UTR of the mRNA sequence."""
+        if self._threep_utr_index_range is None:
+            self.retrieve_threep_utr()
+        return self._threep_utr_index_range
+
+    @property
+    def threep_utr_sequence(self):
+        """Return the sequence of the UTR of the mRNA sequence."""
+        if self._threep_utr_sequence is None:
+            self.retrieve_threep_utr()
+        return self._threep_utr_sequence
 
     @property
     def largest_stem_length(self):
@@ -800,6 +891,24 @@ class mRNA:
         length = self.largest_stem_length
         
         return abs( min( 30 - length, 0 ) ) # Penalize stems longer than 30 bp
+
+    def restriction_sites_count(self):
+        """
+        Count the number of restriction sites in the mRNA sequence.
+        
+        Returns:
+            int: Total number of restriction sites found
+        """
+        curr_sequence = get_sequence_as_dna(self.sequence)
+        total_count = 0
+    
+        for enzyme_name, site_seq in restriction_sites.items():
+            # Convert T to U for RNA sequences if needed
+            site_seq = get_sequence_as_dna(site_seq)
+            count = curr_sequence.count(site_seq)
+            total_count += count
+        
+        return total_count
 
     def calculate_hybridised_contacts_percentage(self):
         """
@@ -929,14 +1038,14 @@ class mRNA:
         
         w_utr = self._loss_weights.get('utr_hybridisation', 0.0)
         if w_utr != 0.0:
-            if 'utr_hybridisation' in loss_components:
-                utr_value = loss_components['utr_hybridisation']
+            if 'fivep_utr_hybridisation' in loss_components:
+                fivep_utr_value = loss_components['fivep_utr_hybridisation']
             else:
                 try:
-                    utr_value = self.utr_hybridisation_penalty
+                    fivep_utr_value = self.fivep_utr_hybridisation_penalty
                 except Exception:
-                    utr_value = 0.0
-            loss_values.append(f"{utr_value:.6e}")
+                    fivep_utr_value = 0.0
+            loss_values.append(f"{fivep_utr_value:.6e}")
         
         w_hairpin = self._loss_weights.get('initial_hybridisation', 0.0)
         if w_hairpin != 0.0:
@@ -1148,14 +1257,14 @@ class mRNA:
                     print(f"Warning: Could not compute stem_penalty for loss components: {e}")
                     f.write(f"stem, 0.000000e+00\n")
             
-            w_utr = self._loss_weights.get('utr_hybridisation', 0.0)
-            if w_utr != 0.0:
+            w_fivep_utr = self._loss_weights.get('fivep_utr_hybridisation', 0.0)
+            if w_fivep_utr != 0.0:
                 try:
-                    utr_value = self.utr_hybridisation_penalty
-                    f.write(f"utr_hybridisation, {utr_value:.6e}\n")
+                    fivep_utr_value = self.fivep_utr_hybridisation_penalty
+                    f.write(f"fivep_utr_hybridisation, {fivep_utr_value:.6e}\n")
                 except Exception as e:
-                    print(f"Warning: Could not compute utr_hybridisation_penalty for loss components: {e}")
-                    f.write(f"utr_hybridisation, 0.000000e+00\n")
+                    print(f"Warning: Could not compute fivep_utr_hybridisation_penalty for loss components: {e}")
+                    f.write(f"fivep_utr_hybridisation, 0.000000e+00\n")
             
             w_hairpin = self._loss_weights.get('initial_hybridisation', 0.0)
             if w_hairpin != 0.0:
@@ -1348,8 +1457,8 @@ class mRNA:
             header_parts.append("CpG")
         if self._loss_weights.get('stem', 0.0) != 0.0:
             header_parts.append("Stem")
-        if self._loss_weights.get('utr_hybridisation', 0.0) != 0.0:
-            header_parts.append("UTR_Hybridisation")
+        if self._loss_weights.get('fivep_utr_hybridisation', 0.0) != 0.0:
+            header_parts.append("fivep_utr_Hybridisation")
         if self._loss_weights.get('initial_hybridisation', 0.0) != 0.0:
             header_parts.append("Initial_Hybridisation")
         if self._loss_weights.get('restriction_sites', 0.0) != 0.0:
@@ -1440,7 +1549,9 @@ class mRNA:
 
                 print(f"Step {i} of {nsteps} completed. Current T: {T}")
                 energy = self.free_energy if self._pf_computed else self.mfe
-                print(f"Current loss: {loss}, energy (x nucleotide): {energy/3}, cai: {np.exp(self.calculate_CAI_log)}")
+                print(f"x nucleotide quantities:")
+                n_nts = len( self.sequence )
+                print(f"Current loss: {loss/n_nts}, energy: {energy/n_nts}, cai (x codon): {self.calculate_CAI(form = 'linear',normalise=True)}")
                 
                 if len(recent_mutations) > 0:
                     # Extract just the accepted values
@@ -1540,6 +1651,7 @@ class mRNA:
         """
         # Replace each codon with the most frequent codon for the amino acid,
         # i.e. the one for which CAI is highest.
+        print(f"Changing the sequence to start from optimal CAI")
         for i, cod in enumerate(self.codons):
             if self.codon_mutability[i]:
                 amino_acid = codon_table[cod]  # Get full amino acid name (e.g., "Alanine", "Methionine")
@@ -1551,6 +1663,7 @@ if __name__ == "__main__":
     sequence = "AUUAAAGGGUUUUAGCAGGGGCCCCUUAAGGCGGCGGAGGACGGG"
     sequence = sequence * 2 
     print(f"Sequence length: {len(sequence)}")
+    assert len(sequence) % 3 == 0, "Sequence length must be divisible by 3"
     weights = {
                 'mfe': 1.0, 
                 'cai': 10.0, 
@@ -1568,12 +1681,14 @@ if __name__ == "__main__":
                 aa_to_codon_cai=human_aa_to_codon_cai,
                 verbose = verbose, 
                 loss_weights=weights, 
-                modify_utr=True,
+                modify_fivep_utr=False,
+                modify_threep_utr=False,
                 initial_region_end_index = 30,
                 T_K = 310,
                 average_stem_num_samples = 20
                 )
-    print(f"McCaskill free-energy (*codon): {system.free_energy} kcal/mol per codon")
+    print(f"Number of nucleotides: {3*len(system.codons)}" )
+    print(f"McCaskill free-energy (*nucleotide): {system.free_energy} / {3*len(system.codons)} kcal/mol per nucleotide")
     system.optimize_codon_usage( 
         T_opt=1.0, 
         nsteps=100, 
@@ -1602,155 +1717,3 @@ if __name__ == "__main__":
     print(f"Printing structure with minimum energy in structure.svg")
     system.visualize_structure(filename="structure.svg", format="svg")
     print(f"Structure visualized in structure.svg")
-
-
-def plot_optimization_statistics(statistics_file="opt_statistics.txt", output_file=None, figsize=(14, 10)):
-    """
-    Plot optimization statistics from opt_statistics.txt file.
-    
-    Creates subplots for:
-    - Acceptance rate over steps
-    - Sequence identity over steps
-    - Loss components over steps (CAI, Free Energy, CpG, Stem, UTR Hybridisation, Initial Hybridisation)
-    - Total loss (if computable from components)
-    
-    Args:
-        statistics_file: Path to the statistics file (default: "opt_statistics.txt")
-        output_file: Path to save the plot (default: None, displays interactively)
-        figsize: Figure size tuple (default: (14, 10))
-    
-    Returns:
-        matplotlib figure object
-    """
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        raise ImportError("matplotlib is required for plotting. Install with: pip install matplotlib")
-    
-    # Read the statistics file
-    try:
-        with open(statistics_file, 'r') as f:
-            all_lines = [line.strip() for line in f if line.strip()]
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Statistics file not found: {statistics_file}")
-    
-    if not all_lines:
-        raise ValueError(f"No data found in {statistics_file}")
-    
-    # Parse header (first line starting with '#')
-    header_line = None
-    data_lines = []
-    for line in all_lines:
-        if line.startswith('#'):
-            if header_line is None:
-                header_line = line.lstrip('#').strip()
-        else:
-            data_lines.append(line)
-    
-    if not header_line:
-        raise ValueError("Could not find header in statistics file")
-    
-    if not data_lines:
-        raise ValueError("No data lines found in statistics file")
-    
-    # Parse header
-    header = [col.strip() for col in header_line.split('\t')]
-    
-    # Parse data
-    data = {}
-    for col in header:
-        data[col] = []
-    
-    for line in data_lines:
-        values = [v.strip() for v in line.split('\t')]
-        for i, val in enumerate(values):
-            if i < len(header):
-                try:
-                    data[header[i]].append(float(val))
-                except ValueError:
-                    data[header[i]].append(val)
-    
-    # Convert to numpy arrays for easier plotting
-    steps = np.array(data.get('Step', []))
-    if len(steps) == 0:
-        raise ValueError("No data points found in statistics file")
-    
-    # Determine number of subplots needed
-    # Always plot: Acceptance_Rate, Sequence_Identity_%
-    # Then plot all loss components that are present
-    loss_components = []
-    for col in header:
-        if col not in ['Step', 'Acceptance_Rate', 'Sequence_Identity_%']:
-            loss_components.append(col)
-    
-    # Create subplots
-    n_plots = 2 + len(loss_components)  # Acceptance rate + Sequence identity + loss components
-    n_cols = 2
-    n_rows = (n_plots + n_cols - 1) // n_cols
-    
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
-    if n_plots == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten()
-    
-    plot_idx = 0
-    
-    # Plot 1: Acceptance Rate
-    if 'Acceptance_Rate' in data and len(data['Acceptance_Rate']) > 0:
-        ax = axes[plot_idx]
-        ax.plot(steps, data['Acceptance_Rate'], 'bo', linestyle='none', markersize=4)
-        ax.set_xlabel('Step', fontsize=11)
-        ax.set_ylabel('Acceptance Rate', fontsize=11)
-        ax.set_title('Acceptance Rate Over Optimization', fontsize=12, fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.set_ylim([0, 1.1])
-        plot_idx += 1
-    
-    # Plot 2: Sequence Identity
-    if 'Sequence_Identity_%' in data and len(data['Sequence_Identity_%']) > 0:
-        ax = axes[plot_idx]
-        ax.plot(steps, data['Sequence_Identity_%'], 'gs', linestyle='none', markersize=4)
-        ax.set_xlabel('Step', fontsize=11)
-        ax.set_ylabel('Sequence Identity (%)', fontsize=11)
-        ax.set_title('Sequence Identity Over Optimization', fontsize=12, fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.set_ylim([0, 110])
-        plot_idx += 1
-    
-    # Plot loss components
-    colors = ['r', 'm', 'c', 'orange', 'purple', 'brown', 'pink', 'gray']
-    for i, component in enumerate(loss_components):
-        if component in data and len(data[component]) > 0:
-            ax = axes[plot_idx]
-            color = colors[i % len(colors)]
-            values = np.array(data[component])
-            
-            # Handle different scales - some might be very small (scientific notation)
-            ax.plot(steps, values, color=color, marker='.', linestyle='none', markersize=4, label=component)
-            ax.set_xlabel('Step', fontsize=11)
-            ax.set_ylabel(component, fontsize=11)
-            ax.set_title(f'{component} Over Optimization', fontsize=12, fontweight='bold')
-            ax.grid(True, alpha=0.3)
-            
-            # Use scientific notation for very small or large values
-            if np.any(np.abs(values) < 1e-3) or np.any(np.abs(values) > 1e3):
-                ax.ticklabel_format(style='scientific', axis='y', scilimits=(0,0))
-            
-            plot_idx += 1
-    
-    # Hide unused subplots
-    for idx in range(plot_idx, len(axes)):
-        axes[idx].set_visible(False)
-    
-    plt.tight_layout()
-    
-    # Save or show
-    if output_file:
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
-        print(f"Plot saved to {output_file}")
-    else:
-        plt.show()
-    
-    return fig
-

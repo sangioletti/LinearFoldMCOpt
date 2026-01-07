@@ -1,0 +1,116 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linearfold-mcopt"
+version = "0.1.0"
+description = "Monte Carlo optimization of mRNA codon usage using LinearFold/LinearPartition"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "Sangiole", email = "sangiole@example.com"}
+]
+keywords = [
+    "mRNA",
+    "codon optimization",
+    "RNA folding",
+    "LinearPartition",
+    "bioinformatics",
+    "Monte Carlo",
+    "simulated annealing",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "numpy>=1.20.0",
+    "fire>=0.4.0",
+    "pyyaml>=5.4.0",
+    "matplotlib>=3.3.0",
+]
+
+[project.optional-dependencies]
+pdb = [
+    "biotite>=0.30.0",
+]
+all = [
+    "biotite>=0.30.0",
+    "scipy>=1.7.0",
+]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=2.0.0",
+    "black>=21.0.0",
+    "isort>=5.0.0",
+    "mypy>=0.900",
+]
+
+[project.scripts]
+codon-optimize = "codon_optimizer_cli:main"
+batch-optimize = "batch_codon_optimizer:main"
+
+[project.urls]
+Homepage = "https://github.com/sangiole/protein_design"
+Documentation = "https://github.com/sangiole/protein_design#readme"
+Repository = "https://github.com/sangiole/protein_design"
+Issues = "https://github.com/sangiole/protein_design/issues"
+
+[tool.setuptools]
+packages = ["linearfold_mcopt"]
+py-modules = [
+    "mRNA",
+    "codons",
+    "linearpartition_wrapper",
+    "codon_optimizer_cli",
+    "batch_codon_optimizer",
+]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.csv"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["mRNA", "codons", "linearpartition_wrapper"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

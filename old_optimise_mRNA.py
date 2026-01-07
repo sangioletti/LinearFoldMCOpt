@@ -25,27 +25,6 @@ first_header = list(fasta_file_obj.keys())[0]
 aa_sequence = str(fasta_file_obj[first_header])
 
 # Now, convert this amino acid sequence into a nucleotide sequence using one possible codon per amino acid
-# We'll use the 'codon_table' from codons.py, which should provide a mapping for each amino acid
-
-def aa_to_codon_sequence(aa_sequence):
-    # Convert amino acid 1-letter code to nucleotide sequence
-    # Use aa_1L_to_codons to get possible codons for each amino acid
-    nucleotide_seq = ""
-    for aa in aa_sequence:
-        if aa == "*" or aa == "X":
-            # Stop codon or unknown, use UAA
-            codon = "UAA"
-        else:
-            # Get possible codons for this amino acid
-            possible_codons = aa_1L_to_codons(aa)
-            if not possible_codons:
-                raise ValueError(f"No codon found for amino acid: {aa}")
-            # Use the first codon possibility for simplicity
-            codon = possible_codons[0]
-        nucleotide_seq += codon
-    return nucleotide_seq
-
-# Convert amino acid sequence to nucleotide sequence
 nucleotide_sequence = aa_to_codon_sequence(aa_sequence)
 
 
@@ -66,6 +45,7 @@ system = mRNA(
                 sequence = sequence, 
                 species = 'human', 
                 aa_to_codon_cai=human_aa_to_codon_cai,
+                start_from_optimal_cai=True,
                 verbose = verbose, 
                 loss_weights=weights, 
                 modify_utr=False,
@@ -74,8 +54,8 @@ system = mRNA(
                 bpp_cutoff = 0.01,
                 beamsize=100,
                 )
-print(f"Sequence length: {len(sequence)}")
-print(f"McCaskill free-energy (*codon): {system.free_energy} kcal/mol per codon")
+print(f"Sequence length (in nucleotides): {len(sequence)}")
+print(f"McCaskill free-energy (*per nucleotide): {system.free_energy/len(sequence)} kcal/mol per nucleotide") 
 system.optimize_codon_usage( 
     T_opt=0.01, 
     nsteps=100, 

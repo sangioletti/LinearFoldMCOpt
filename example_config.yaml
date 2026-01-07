@@ -1,0 +1,79 @@
+# Codon Optimization Configuration File
+# =====================================
+
+# Unique Identifier
+# -----------------
+# Used for naming output folder (result_{identifier}) and files
+# If not provided, a random 10-character ID will be generated
+identifier: 'TEST_1'  # e.g., "luciferase_v1" or leave null for auto-generation
+
+# Sequence Source (use ONE of the following options)
+# --------------------------------------------------
+
+# Option 1: Direct nucleotide sequence
+# sequence: "AUGUUUAAAGGG..."
+
+# Option 2: Direct amino acid sequence (1-letter code)
+# aa_sequence: "MFKG..."
+
+# Option 3: PDB ID to fetch sequence from
+pdb_id: "1BA3"
+pdb_chain: null  # Optional: specify chain (e.g., "A")
+
+# Option 4: FASTA file path
+# fasta_file: "/path/to/sequence.fasta"
+
+# Sequence Processing
+# -------------------
+five_prime_utr: "AUUUGGUGGAGG"  # 5' UTR to prepend (before start codon)
+three_prime_utr: ""             # 3' UTR to append (after stop codon)
+add_start_codon: true           # Add AUG if not present
+add_stop_codon: true            # Add UAA if not present
+
+# Species Configuration
+# --------------------
+species: "human"  # Options: human, e_coli, mouse, rat, yeast, other
+
+# mRNA System Parameters
+# ----------------------
+T_K: 310                        # Temperature in Kelvin
+modify_fivep_utr: false               # Allow mutations in 5' UTR region
+modify_threep_utr: false               # Allow mutations in 3' UTR region
+initial_region_end_index: 30    # End of initial region for hybridization penalty
+beamsize: 100                   # LinearPartition beam size
+bpp_cutoff: 0.01               # Base pair probability cutoff
+start_from_optimal_cai: true    # Start from optimal CAI sequence
+verbose: false                  # Verbose output
+
+# Loss Function Weights
+# --------------------
+# Set weight to 0.0 to disable a component
+loss_weights:
+  cai: 10.0                     # Codon Adaptation Index (maximize)
+  fe: 1.0                       # Free energy (minimize)
+  cpg: 3.0                      # CpG content (minimize)
+  stem: 3.0                     # Stem/hairpin penalty
+  fivep_utr_hybridisation: 3.0  # 5' UTR hybridization penalty
+  initial_hybridisation: 3.0    # Initial region hybridization penalty
+  # mfe: 0.0                    # Minimum free energy (alternative to fe)
+  restriction_sites: 0.0      # Restriction site penalty
+  kozak: 10.0                    # Kozak sequence penalty
+
+# Optimization Parameters
+# ----------------------
+optimization:
+  T_opt: 1.00                   # Initial temperature for simulated annealing
+  nsteps: 100                   # Number of steps (multiplied by number of codons)
+  sample_frequency: 2         # Frequency of progress output
+  output_filename: "opt_statistics.txt"
+  n_sample: null                # Steps between statistics saves (default: sample_frequency)
+  use_average_stem_length: false
+  average_stem_num_samples: 20
+
+# Output Configuration
+# -------------------
+# Output will be saved to: {output_dir}/result_{identifier}/
+output:
+  output_dir: "."               # Base output directory
+  save_structure_svg: true
+  save_prob_matrix: true

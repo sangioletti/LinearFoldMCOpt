@@ -1,0 +1,40 @@
+T_K: 310
+aa_sequence: null
+add_start_codon: true
+add_stop_codon: true
+beamsize: 100
+bpp_cutoff: 0.01
+fasta_file: null
+five_prime_utr: AUUUGGUGGAGG
+identifier: TEST_1
+initial_region_end_index: 30
+loss_weights:
+  cai: 10.0
+  cpg: 3.0
+  fe: 1.0
+  fivep_utr_hybridisation: 3.0
+  initial_hybridisation: 3.0
+  kozak: 10.0
+  restriction_sites: 0.0
+  stem: 3.0
+modify_fivep_utr: false
+modify_threep_utr: false
+optimization:
+  T_opt: 1.0
+  average_stem_num_samples: 20
+  n_sample: null
+  nsteps: 100
+  output_filename: opt_statistics.txt
+  sample_frequency: 2
+  use_average_stem_length: false
+output:
+  output_dir: /gpfs/home/sangiole/Github-repos/protein_design/LinearFoldMCOpt/batch_jobs/luciferase_1BA3
+  save_prob_matrix: true
+  save_structure_svg: true
+pdb_chain: A
+pdb_id: 1BA3
+sequence: null
+species: human
+start_from_optimal_cai: true
+three_prime_utr: ''
+verbose: false
