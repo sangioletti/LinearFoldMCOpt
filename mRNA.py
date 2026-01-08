@@ -776,7 +776,7 @@ class mRNA:
 
     def hybridisation_penalty(self, start_index, end_index ):
         if start_index == end_index:
-            raise ValueError("Start index and end index are the same")
+            return 0.0
         
         # Use prob_matrix property (will compute if needed)
         try:
