@@ -89,6 +89,11 @@ class mRNA:
         else:
             print(f"Initial (Random) codon sequence: {self._initial_codons}")
 
+        assert self.n_nucleotides % 3 == 0, f"Sequence length must be divisible by 3 but is {self.n_nucleotides}"
+
+        print(f"Index of 5'UTR: {self.fivep_utr_index_range}")
+        print(f"Index of 3'UTR: {self.threep_utr_index_range}")
+
         self.verbose = verbose
         self.RT = 0.001987 * T_K  # kcal/(mol*K) * K
         self._minimum_folding_energy = None
@@ -128,12 +133,13 @@ class mRNA:
 
     @property
     def n_nucleotides(self):
-        return len(self.codons)
+        return len(self.sequence)
     
     def validate_weights(self):
         all_keys = set(self._loss_weights.keys())
         valid_keys = ['mfe', 'fe', 'cai', 'cpg', 'stem', 'threep_utr_hybridisation', 
-                      'fivep_utr_hybridisation', 'initial_hybridisation', 'restriction_sites', 'kozak']
+                      'fivep_utr_hybridisation', 'initial_hybridisation', 'restriction_sites', 
+                      'kozak', 'codon_divergence']
         for k in all_keys:
             if k not in valid_keys: 
                 raise ValueError(f"Invalid loss weight key: {k}. Valid keys are: {valid_keys}")
@@ -146,7 +152,7 @@ class mRNA:
         # kozak_sequence = GCC(A/G)CCATG
         # we accept defects in the first two positions,
         # but still penalise them
-        kozak = ['CACCATG','CGCCATG']
+        kozak = ['CACCATG','CGCCATG','CACCAUG','CGCCAUG']
         present = False
         penalty = 0.0
         fivep_utr_sequence = self.fivep_utr_sequence
@@ -238,6 +244,135 @@ class mRNA:
             # Note: _codons_changed is reset in codons_string property
 
         return self._cai_log
+
+    def get_observed_codon_distribution(self) -> dict:
+        """
+        Calculate the observed codon frequency distribution per amino acid.
+        
+        Returns:
+            Dict[amino_acid: Dict[codon: frequency]]
+            Frequencies are normalized to sum to 1 for each amino acid.
+        """
+        # Count codons per amino acid
+        codon_counts = {}  # {amino_acid: {codon: count}}
+        
+        for codon in self.codons:
+            if codon not in codon_table:
+                continue
+            aa = codon_table[codon]
+            if aa not in codon_counts:
+                codon_counts[aa] = {}
+            codon_counts[aa][codon] = codon_counts[aa].get(codon, 0) + 1
+        
+        # Normalize to frequencies
+        observed_dist = {}
+        for aa, counts in codon_counts.items():
+            total = sum(counts.values())
+            if total > 0:
+                observed_dist[aa] = {codon: count / total for codon, count in counts.items()}
+        
+        return observed_dist
+
+    def get_expected_codon_distribution(self) -> dict:
+        """
+        Get the expected codon probability distribution from CAI values.
+        CAI values are normalized per amino acid to form a probability distribution.
+        
+        Returns:
+            Dict[amino_acid: Dict[codon: probability]]
+        """
+        expected_dist = {}
+        
+        for aa, codon_cai in self.aa_to_codon_cai.items():
+            # Normalize CAI values to probabilities
+            total_cai = sum(codon_cai.values())
+            if total_cai > 0:
+                expected_dist[aa] = {codon: cai / total_cai for codon, cai in codon_cai.items()}
+        
+        return expected_dist
+
+    @staticmethod
+    def _jensen_shannon_divergence(p: np.ndarray, q: np.ndarray) -> float:
+        """
+        Calculate Jensen-Shannon divergence between two probability distributions.
+        JS(p, q) = 0.5 * KL(p || m) + 0.5 * KL(q || m) where m = 0.5 * (p + q)
+        
+        This is symmetric and always finite (no division by zero issues).
+        Uses log base 2 so the result is bounded between 0 and 1.
+        
+        Args:
+            p: First probability distribution (numpy array)
+            q: Second probability distribution (numpy array)
+            
+        Returns:
+            Jensen-Shannon divergence (bounded between 0 and 1)
+        """
+        # Ensure valid probability distributions
+        p = np.asarray(p, dtype=float)
+        q = np.asarray(q, dtype=float)
+        
+        # Compute mixture distribution
+        m = 0.5 * (p + q)
+        
+        # Compute KL divergences using safe log2 (0 * log(0) = 0)
+        def safe_kl(a, b):
+            """KL(a || b) with safe handling of zeros, using log base 2"""
+            result = 0.0
+            for ai, bi in zip(a, b):
+                if ai > 0 and bi > 0:
+                    result += ai * np.log2(ai / bi)
+            return result
+        
+        js = 0.5 * safe_kl(p, m) + 0.5 * safe_kl(q, m)
+        return js
+
+    @property
+    def codon_distribution_divergence(self) -> float:
+        """
+        Calculate the divergence between observed and expected codon distributions.
+        Uses Jensen-Shannon divergence which is symmetric and always finite.
+        
+        The divergence is summed over all amino acids, weighted by the number of
+        occurrences of each amino acid in the sequence.
+        
+        Returns:
+            Total weighted JS divergence (lower = more similar to expected)
+        """
+        observed = self.get_observed_codon_distribution()
+        expected = self.get_expected_codon_distribution()
+        
+        total_divergence = 0.0
+        total_codons = 0
+        
+        for aa in observed:
+            # Skip single-codon amino acids (no choice to optimize)
+            if aa in ['Methionine', 'Tryptophan']:
+                continue
+            
+            if aa not in expected:
+                continue
+            
+            # Get all possible codons for this amino acid
+            all_codons = list(expected[aa].keys())
+            
+            # Build probability vectors (same order for both)
+            p_obs = np.array([observed[aa].get(codon, 0.0) for codon in all_codons])
+            p_exp = np.array([expected[aa].get(codon, 0.0) for codon in all_codons])
+            
+            # Count of this amino acid in sequence (for weighting)
+            aa_count = sum(1 for c in self.codons if codon_table.get(c) == aa)
+            
+            # Calculate JS divergence for this amino acid
+            js_div = self._jensen_shannon_divergence(p_obs, p_exp)
+            
+            # Weight by amino acid frequency
+            total_divergence += js_div * aa_count
+            total_codons += aa_count
+        
+        # Normalize by total codons to get per-codon divergence
+        if total_codons > 0:
+            return total_divergence / total_codons
+        return 0.0
 
     @property
     def mfe(self) -> float:
@@ -478,12 +613,6 @@ class mRNA:
                 self._cached_structure_seq_hash = None
             # Reset partition function computation flag
             self._pf_computed = False
-            if self.modify_fivep_utr:
-                self._fivep_utr_index_range = None
-                self._fivep_utr_sequence = None
-            if self.modify_threep_utr:
-                self._threep_utr_index_range = None
-                self._threep_utr_sequence = None
         else:
             # Selective reset based on what's needed
             if isinstance(what, str):
@@ -595,6 +724,9 @@ class mRNA:
         w_hairpin = self._loss_weights.get('initial_hybridisation', 0.0)
         if w_hairpin != 0.0:
             loss += w_hairpin * self.initial_hybridisation_penalty
+        w_codon_div = self._loss_weights.get('codon_divergence', 0.0)
+        if w_codon_div != 0.0:
+            loss += w_codon_div * self.codon_distribution_divergence
         return loss
 
     def visualize_structure(self, filename="structure.svg", format="svg"):
@@ -724,6 +856,14 @@ class mRNA:
         self._threep_utr_sequence = self.codons_string[(stop_idx + 1) * 3:]  # 3 nucleotides per codon
         return self._threep_utr_index_range
 
+    def retrieve_cds(self):
+        """Find the CDS of the mRNA sequence, corresponding to the region between the start and stop codons"""
+        start_index = self.retrieve_fivep_utr()[1] + 1
+        stop_index = self.retrieve_threep_utr()[0] - 1
+        self._cds_index_range = (start_index, stop_index)
+        self._cds_sequence = self.codons_string[start_index * 3:stop_index * 3]  # 3 nucleotides per codon
+        return self._cds_index_range
+
     @property
     def start_index(self):
         if self._start_index is None:
@@ -736,19 +876,27 @@ class mRNA:
         return
 
     def stop_index(self):
+        """Find the stop codon - the FIRST stop codon AFTER the start codon.
+        
+        Additional stop codons in the 3' UTR are allowed and won't raise an error.
+        """
         mask = np.zeros(len(self.codons), dtype=bool)
         for codon in aminoacid_to_codon_table['Stop']:
             mask = mask | (self.codons == codon)
-        indices = np.arange( len( self.codons ) )
-        stop_indices = indices[ mask ]
-        try:
-            if len( stop_indices ) > 1:
-                raise ValueError( "Multiple stop codons found in the sequence" )
-            _stop_index = stop_indices[0]
-            assert _stop_index > self.start_index, "Stop codon found before start codon"
-            print( f"Stop codon found at index {_stop_index}" )
-        except IndexError:
-            raise ValueError( f"No stop codon found in the sequence: mask is {mask}" )
+        indices = np.arange(len(self.codons))
+        
+        # Only look for stop codons AFTER the start codon (no circular dep)
+        start_idx = self.start_index
+        mask2 = indices > start_idx
+        mask = mask & mask2
+        stop_indices = indices[mask]
+        
+        if len(stop_indices) == 0:
+            raise ValueError(f"No stop codon found after start codon at index {start_idx}")
+        
+        # The FIRST stop codon after start is THE CDS stop codon
+        # Additional stop codons in 3' UTR are fine and ignored
+        _stop_index = stop_indices[0]
         self._stop_index = _stop_index
         return _stop_index
 
@@ -989,33 +1137,31 @@ class mRNA:
         # Properties use sequence-based caching, so accessing them after loss computation is efficient
         w_cai = self._loss_weights.get('cai', 0.0)
         if w_cai != 0.0:
-            if 'cai' in loss_components:
-                cai_value = loss_components['cai']
-            else:
-                cai_value = np.exp(self.calculate_CAI_log)
-            loss_values.append(f"{cai_value:.6e}")
+            # For CAI, we actually recalculate it to store the linear form
+            cai_value = self.calculate_CAI(form="linear",normalise=True)
+            loss_values.append(cai_value)
         
         w_mfe = self._loss_weights.get('mfe', 0.0)
         if w_mfe != 0.0:
             if 'mfe' in loss_components:
-                mfe_value = loss_components['mfe']
+                mfe_value = loss_components['mfe'] / self.n_nucleotides
             else:
                 try:
-                    mfe_value = self.mfe
+                    mfe_value = self.mfe / self.n_nucleotides
                 except Exception:
                     mfe_value = 0.0
-            loss_values.append(f"{mfe_value:.6e}")
+            loss_values.append(mfe_value)
         
         w_fe = self._loss_weights.get('fe', 0.0)
         if w_fe != 0.0:
             if 'fe' in loss_components:
-                fe_value = loss_components['fe']
+                fe_value = loss_components['fe'] / self.n_nucleotides
             else:
                 try:
-                    fe_value = self.free_energy
+                    fe_value = self.free_energy / self.n_nucleotides
                 except Exception:
                     fe_value = 0.0
-            loss_values.append(f"{fe_value:.6e}")
+            loss_values.append(fe_value)
         
         w_cpg = self._loss_weights.get('cpg', 0.0)
         if w_cpg != 0.0:
@@ -1023,7 +1169,7 @@ class mRNA:
                 cpg_value = loss_components['cpg']
             else:
                 cpg_value = self.cpg_count
-            loss_values.append(f"{cpg_value:.6e}")
+            loss_values.append(cpg_value)
         
         w_stem = self._loss_weights.get('stem', 0.0)
         if w_stem != 0.0:
@@ -1034,10 +1180,10 @@ class mRNA:
                     stem_value = self.stem_penalty
                 except Exception:
                     stem_value = 0.0
-            loss_values.append(f"{stem_value:.6e}")
+            loss_values.append(stem_value)
         
-        w_utr = self._loss_weights.get('utr_hybridisation', 0.0)
-        if w_utr != 0.0:
+        w_5p_utr = self._loss_weights.get('fivep_utr_hybridisation', 0.0)
+        if w_5p_utr != 0.0:
             if 'fivep_utr_hybridisation' in loss_components:
                 fivep_utr_value = loss_components['fivep_utr_hybridisation']
             else:
@@ -1045,8 +1191,19 @@ class mRNA:
                     fivep_utr_value = self.fivep_utr_hybridisation_penalty
                 except Exception:
                     fivep_utr_value = 0.0
-            loss_values.append(f"{fivep_utr_value:.6e}")
-        
+            loss_values.append(fivep_utr_value)
+
+        w_3p_utr = self._loss_weights.get('threep_utr_hybridisation', 0.0)
+        if w_3p_utr != 0.0:
+            if 'threep_utr_hybridisation' in loss_components:
+                threep_utr_value = loss_components['threep_utr_hybridisation']
+            else:
+                try:
+                    threep_utr_value = self.threep_utr_hybridisation_penalty
+                except Exception:
+                    threep_utr_value = 0.0
+            loss_values.append(threep_utr_value)
+
         w_hairpin = self._loss_weights.get('initial_hybridisation', 0.0)
         if w_hairpin != 0.0:
             if 'initial_hybridisation' in loss_components:
@@ -1056,7 +1213,7 @@ class mRNA:
                     hairpin_value = self.initial_hybridisation_penalty
                 except (ValueError, AttributeError):
                     hairpin_value = 0.0
-            loss_values.append(f"{hairpin_value:.6e}")
+            loss_values.append(hairpin_value)
         
         w_restriction = self._loss_weights.get('restriction_sites', 0.0)
         if w_restriction != 0.0:
@@ -1067,14 +1224,36 @@ class mRNA:
                     restriction_value = self.restriction_sites_count
                 except Exception:
                     restriction_value = 0.0
-            loss_values.append(f"{restriction_value:.6e}")
+            loss_values.append(restriction_value)
         
-        # Format: step, acceptance_rate, sequence_identity_%, [loss_component_values...]
-        loss_str = "\t".join(loss_values) if loss_values else ""
-        if loss_str:
-            line = f"{step}\t{acceptance_rate:.4f}\t{sequence_identity:.4f}\t{loss_str}\n"
-        else:
-            line = f"{step}\t{acceptance_rate:.4f}\t{sequence_identity:.4f}\n"
+        w_codon_divergence = self._loss_weights.get('codon_divergence', 0.0)
+        if w_codon_divergence != 0.0:
+            if 'codon_divergence' in loss_components:
+                codon_divergence_value = loss_components['codon_divergence']
+            else:
+                try:
+                    codon_divergence_value = self.codon_distribution_divergence
+                except Exception:
+                    codon_divergence_value = 0.0
+            loss_values.append(codon_divergence_value)
+        
+        w_kozak = self._loss_weights.get('kozak', 0.0)
+        if w_kozak != 0.0:
+            if 'kozak' in loss_components:
+                kozak_value = loss_components['kozak']
+            else:
+                try:
+                    _, kozak_value = self._kozak_penalty()
+                except Exception:
+                    kozak_value = 0.0
+            loss_values.append(kozak_value)
+        
+        # Format with fixed-width columns (24 chars each) for alignment with header
+        col_width = 24
+        parts = [f"{step:<{col_width}}", f"{acceptance_rate:<{col_width}.4f}", f"{sequence_identity:<{col_width}.4f}"]
+        for val in loss_values:
+            parts.append(f"{val:<{col_width}.6e}")
+        line = "".join(parts) + "\n"
         
         if isinstance(output_file, str):
             # If it's a file path, open in append mode
@@ -1458,14 +1637,23 @@ class mRNA:
         if self._loss_weights.get('stem', 0.0) != 0.0:
             header_parts.append("Stem")
         if self._loss_weights.get('fivep_utr_hybridisation', 0.0) != 0.0:
-            header_parts.append("fivep_utr_Hybridisation")
+            header_parts.append("Fivep_Utr_Hybridisation")
+        if self._loss_weights.get('threep_utr_hybridisation', 0.0) != 0.0:
+            header_parts.append("Threep_Utr_Hybridisation")
         if self._loss_weights.get('initial_hybridisation', 0.0) != 0.0:
             header_parts.append("Initial_Hybridisation")
         if self._loss_weights.get('restriction_sites', 0.0) != 0.0:
             header_parts.append("Restriction_Sites")
+        if self._loss_weights.get('codon_divergence', 0.0) != 0.0:
+            header_parts.append("Codon_Divergence")
+        if self._loss_weights.get('kozak', 0.0) != 0.0:
+            header_parts.append("Kozak")
         
+        # Format header with fixed-width columns (24 chars each) to match data rows
+        col_width = 24
+        header_line = "".join([f"{h:<{col_width}}" for h in header_parts]) + "\n"
         with open(output_filename, 'w') as f:
-            f.write("\t".join(header_parts) + "\n")
+            f.write(header_line)
         
         for i, T in enumerate( T_schedule ):
             current_codon, new_codon, index = self.propose_codon_mutation()
@@ -1479,13 +1667,22 @@ class mRNA:
                 if self._loss_weights.get('stem', 0.0) != 0.0:
                     reset_what.append('structure')
                     reset_what.append('stem')
-                if self._loss_weights.get('utr_hybridisation', 0.0) != 0.0 or \
-                   self._loss_weights.get('initial_hybridisation', 0.0) != 0.0:
-                    reset_what.append('bpp')
+                if self._loss_weights.get('fivep_utr_hybridisation', 0.0) != 0.0:
+                    reset_what.append('fivep_utr_hybridisation')
+                if self._loss_weights.get('threep_utr_hybridisation', 0.0) != 0.0:
+                    reset_what.append('threep_utr_hybridisation')
+                if self._loss_weights.get('initial_hybridisation', 0.0) != 0.0:
+                    reset_what.append('initial_hybridisation')
                 if self._loss_weights.get('cai', 0.0) != 0.0:
                     reset_what.append('cai')
                 if self._loss_weights.get('cpg', 0.0) != 0.0:
                     reset_what.append('cpg')
+                if self._loss_weights.get('restriction_sites', 0.0) != 0.0:
+                    reset_what.append('restriction_sites')
+                if self._loss_weights.get('stem', 0.0) != 0.0:
+                    reset_what.append('stem')
+                if self._loss_weights.get('codon_divergence', 0.0) != 0.0:
+                    reset_what.append('codon_divergence')
                 
                 # Selective reset instead of full reset
                 if reset_what:
@@ -1515,6 +1712,7 @@ class mRNA:
                     accepted = True
                 else:
                     delta = new_loss - loss
+                    print(f"Delta loss = {delta}")
                     # Avoid division by zero or very small T
                     if T > 1e-10:
                         accept_probability = np.exp(-delta/T)
@@ -1522,6 +1720,7 @@ class mRNA:
                         # If T is very small, only accept if loss decreases
                         accept_probability = 0.0
                     if np.random.rand() < accept_probability:
+                        print(f"Change accepted, delta loss = {delta}")
                         # Accept with probability
                         loss = new_loss
                         accepted = True
@@ -1613,14 +1812,6 @@ class mRNA:
                 except Exception as e:
                     print(f"Error saving structure at step {i}: {e}")
                 
-                # Save loss components
-                try:
-                    self.save_loss_components(i)
-                except Exception as e:
-                    print(f"Error saving loss components at step {i}: {e}")
-                    #import traceback
-                    #traceback.print_exc()
-
         # Save final statistics
         # Calculate acceptance rate over last n_sample steps
         recent_mutations = [(step, acc) for step, acc in acceptance_history 

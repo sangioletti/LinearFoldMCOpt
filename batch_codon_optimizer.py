@@ -72,20 +72,13 @@ def read_sequences_csv(csv_path: str) -> List[Dict[str, str]]:
     sequences = []
     
     with open(csv_path, 'r', newline='') as f:
-        # Try to detect dialect
-        sample = f.read(2048)
-        f.seek(0)
-        
-        try:
-            dialect = csv.Sniffer().sniff(sample)
-        except csv.Error:
-            dialect = 'excel'
-        
-        reader = csv.DictReader(f, dialect=dialect)
+        # Use standard comma-delimited CSV (don't rely on sniffer - it's unreliable)
+        reader = csv.DictReader(f)
         
         for i, row in enumerate(reader):
-            # Normalize column names (lowercase, strip whitespace)
-            row = {k.lower().strip(): v.strip() for k, v in row.items()}
+            # Normalize column names (lowercase, strip whitespace), skip None keys
+            row = {k.lower().strip(): v.strip() if isinstance(v, str) else v 
+                   for k, v in row.items() if k is not None}
             
             # Check for required fields
             if 'name' not in row:
@@ -111,14 +104,13 @@ def read_sequences_csv(csv_path: str) -> List[Dict[str, str]]:
     
     return sequences
 
-
 def generate_pbs_script(
     job_name: str,
     config_path: str,
     job_dir: str,
     script_path: str,
     python_path: str,
-    queue: str = "normal",
+    queue: str = "hx",
     walltime: str = "24:00:00",
     ncpus: int = 1,
     mem: str = "8GB",
@@ -191,7 +183,7 @@ def generate_slurm_script(
     job_dir: str,
     script_path: str,
     python_path: str,
-    partition: str = "normal",
+    partition: str = "hx",
     time: str = "24:00:00",
     cpus: int = 1,
     mem: str = "8G",
@@ -278,8 +270,8 @@ Or with PDB IDs:
                         help="Output directory for job files (default: batch_jobs)")
     parser.add_argument("--scheduler", choices=["pbs", "slurm"], default="pbs",
                         help="Job scheduler type (default: pbs)")
-    parser.add_argument("--queue", "-q", default="normal",
-                        help="Queue/partition name (default: normal)")
+    parser.add_argument("--queue", "-q", default="hx",
+                        help="Queue/partition name (default: hx)")
     parser.add_argument("--walltime", "-t", default="24:00:00",
                         help="Wall time limit (default: 24:00:00)")
     parser.add_argument("--ncpus", "-n", type=int, default=1,

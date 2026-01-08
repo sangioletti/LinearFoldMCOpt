@@ -1,0 +1,88 @@
+# Codon Optimization Configuration File
+# =====================================
+
+# Unique Identifier
+# -----------------
+# Used for naming output folder (result_{identifier}) and files
+# If not provided, a random 10-character ID will be generated
+identifier: null  # leave null for auto-generation
+
+# Sequence Source (use ONE of the following options)
+# --------------------------------------------------
+
+# Option 1: Direct nucleotide sequence
+# sequence: "AUGUUUAAAGGG..."
+
+# Option 2: Direct amino acid sequence (1-letter code)
+# aa_sequence: "MFKG..."
+
+# Option 3: PDB ID to fetch sequence from
+pdb_id: "1BA3"
+pdb_chain: null  # Optional: specify chain (e.g., "A")
+
+# Option 4: FASTA file path
+# fasta_file: "/path/to/sequence.fasta"
+
+# Sequence Processing
+# -------------------
+# 5'UTR taken from plasmid pLenti-NGFR-mCA8LHBCMA
+five_prime_utr: "GTTTAGTGAACCGTCAGATCGCCTGGAGACGCCATCCACGCTGTTTTGACCTCCATAGAAGACACCGGAGCTTCTAGAGCCACC" # 5' UTR to prepend (before start codon).
+
+# 3'UTR taken from plasmid pLenti-NGFR-mCA8LHBCMA. Include WTRE (factor to transport outside nucleus) and 3'LTR
+three_prime_utr: "GtcgacaatcaacctctggattacaaaatttgtgaaagattgactggtattcttaactatgttgctccttttacgctatgtggatacgctgctttaatgcctttgtatcatgctattgcttcccgtatggctttcattttctcctccttgtataaatcctggttgctgtctctttatgaggagttgtggcccgttgtcaggcaacgtggcgtggtgtgcactgtgtttgctgacgcaacccccactggttggggcattgccaccacctgtcagctcctttccgggactttcgctttccccctccctattgccacggcggaactcatcgccgcctgccttgcccgctgctggacaggggctcggctgttgggcactgacaattccgtggtgttgtcggggaagctgacgtcctttccttggctgctcgcctgtgttgccacctggattctgcgcgggacgtccttctgctacgtcccttcggccctcaatccagcggaccttccttcccgcggcctgctgccggctctgcggcctcttccgcgtcttcgccttcgccctcagacgagtcggatctccctttgggccgcctccccgcctggaattcgagctcggtacCTTTAAGACCAATGACTTACAAGGCAGCTGTAGATCTTAGCCACTTTTTAAAAGAAAAGGGGGGACTGGAAGGGCTAATTCACTCCCAACGAAGACAAGATCTGCTTTTTGCTTGTACTGGGTCTCTCTGGTTAGACCAGATCTGAGCCTGGGAGCTCTCTGGCTAACTAGGGAACCCACTGCTTAAGCCTCAATAAAGCTTGCCTTGAGTGCTTCAAGTAGTGTGTGCCCGTCTGTTGTGTGACTCTGGTAACTAGAGATCCCTCAGACCCTTTTAGTCAGTGTGGAAAATCTCTAGCAGTA"
+
+# Linker to be added after the binder codons, if present
+binder_linker: "ggctccacctctggatccggcaagcccggatctggcgagggatccaccaagggc"
+
+# Additional codons to be added after the binder linker, if present
+additional_car_codons: "gcggccgcaattgaagttatgtatcctcctccttacctagacgctagcaatgagaagagcaatggaaccattatccatgtgaaagggaaacacctttgtccaagtcccctatttcccggaccttctaagcccttttgggtgctggtggtggttgggggagtcctggcttgctatagcttgctagtaacagtggcctttattattttctgggtgaggagtaagaggagcaggctcctgcacagtgactacatgaacatgactccccgccgccccgggcccacccgcaagcattaccagccctatgccccaccacgcgacttcgcagcctatcgctccagagtgaagttcagcaggagcgcagacgcccccgcgtaccagcagggccagaaccagctctataacgagctcaatctaggacgaagagaggagtacgatgttttggacaagagacgtggccgggaccctgagatggggggaaagccgagaaggaagaaccctcaggaaggcctgtacaatgaactgcagaaagataagatggcggaggcctacagtgagattgggatgaaaggcgagcgccggaggggcaaggggcacgatggcctttaccagggtctcagtacagccaccaaggacacctacgacgcccttcacatgcaggccctgccccctcgctaa"
+
+# Species Configuration
+# --------------------
+species: "human"  # Options: human, e_coli, mouse, rat, yeast, other
+
+# mRNA System Parameters
+# ----------------------
+T_K: 300                        # Temperature in Kelvin
+modify_fivep_utr: false               # Allow mutations in 5' UTR region
+modify_threep_utr: false               # Allow mutations in 3' UTR region
+initial_region_end_index: 30    # End of initial region for hybridization penalty
+beamsize: 100                   # LinearPartition beam size
+bpp_cutoff: 0.01               # Base pair probability cutoff
+start_from_optimal_cai: true    # Start from optimal CAI sequence
+verbose: false                  # Verbose output
+
+# Loss Function Weights
+# --------------------
+# Set weight to 0.0 to disable a component
+loss_weights:
+  cai: 10.0                     # Codon Adaptation Index (maximize)
+  fe: 1.0                       # Free energy (minimize)
+  cpg: 10.0                      # CpG content (minimize)
+  stem: 10.0                     # Stem/hairpin penalty
+  fivep_utr_hybridisation: 5.0  # 5' UTR hybridization penalty
+  threep_utr_hybridisation: 5.0  # 3' UTR hybridization penalty
+  initial_hybridisation: 5.0    # Initial region hybridization penalty
+  # mfe: 0.0                    # Minimum free energy (alternative to fe)
+  restriction_sites: 5.0        # Restriction site penalty
+  kozak: 5.0                   # Kozak sequence penalty
+  codon_divergence: 10.0         # Codon distribution divergence (JS, bounded [0,1])
+
+# Optimization Parameters
+# ----------------------
+optimization:
+  T_opt: 1.00                   # Initial temperature for simulated annealing
+  nsteps: 100                   # Number of steps (multiplied by number of codons)
+  sample_frequency: 10         # Frequency of progress output
+  output_filename: "opt_statistics.txt"
+  n_sample: null                # Steps between statistics saves (default: sample_frequency)
+  use_average_stem_length: false
+  average_stem_num_samples: 20
+
+# Output Configuration
+# -------------------
+# Output will be saved to: {output_dir}/result_{identifier}/
+output:
+  output_dir: "."               # Base output directory
+  save_structure_svg: true
+  save_prob_matrix: true

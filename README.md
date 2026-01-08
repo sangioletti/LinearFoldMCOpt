@@ -185,7 +185,7 @@ gfp,1EMA,
 python batch_codon_optimizer.py sequences.csv config.yaml \
     --output_dir batch_jobs \
     --scheduler pbs \
-    --queue normal \
+    --queue hx \
     --walltime 24:00:00 \
     --ncpus 1 \
     --mem 8GB \
@@ -195,7 +195,7 @@ python batch_codon_optimizer.py sequences.csv config.yaml \
 python batch_codon_optimizer.py sequences.csv config.yaml \
     --output_dir batch_jobs \
     --scheduler slurm \
-    --queue normal \
+    --queue hx \
     --walltime 24:00:00
 ```
 

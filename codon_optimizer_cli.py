@@ -97,10 +97,10 @@ def load_config(config_path: str) -> Dict[str, Any]:
     defaults = {
         'species': 'human',
         'verbose': False,
-        'T_K': 310,
+        'T_K': 300,
         'modify_fivep_utr': False,
         'modify_threep_utr': False,
-        'initial_region_end_index': 30,
+        'initial_region_end_index': 0,
         'beamsize': 100,
         'bpp_cutoff': 0.01,
         'start_from_optimal_cai': True,
@@ -108,14 +108,16 @@ def load_config(config_path: str) -> Dict[str, Any]:
             'cai': 10.0,
             'fe': 1.0,
             'cpg': 3.0,
-            'stem': 3.0,
+            'stem': 10.0,
             'fivep_utr_hybridisation': 3.0,
-            'initial_hybridisation': 3.0,
+            'threep_utr_hybridisation': 0.0,
+            'initial_hybridisation': 0.0,
+            'codon_divergence': 10.0,
         },
         'optimization': {
-            'T_opt': 0.01,
+            'T_opt': 1.0,
             'nsteps': 100,
-            'sample_frequency': 100,
+            'sample_frequency': 20,
             'output_filename': 'opt_statistics.txt',
             'n_sample': None,
             'use_average_stem_length': False,
@@ -135,10 +137,10 @@ def load_config(config_path: str) -> Dict[str, Any]:
         'pdb_chain': None,  # Optional PDB chain
         'fasta_file': None,  # FASTA file path
         # UTR options
-        'five_prime_utr': 'AUUUGGUGGAGG',  # Default 5' UTR
-        'three_prime_utr': '',  # Default 3' UTR (after stop codon)
-        'add_start_codon': True,  # Add start codon if not present
-        'add_stop_codon': True,  # Add stop codon if not present
+        'five_prime_utr': 'GCCACCAUG',  # Default 5' UTR
+        'three_prime_utr': 'A'*201,  # Default 3' UTR (after stop codon)
+        'additional_car_codons': '',
+        'binder_linker': '',
     }
     
     # Merge defaults with config (config takes precedence)
@@ -206,33 +208,68 @@ def get_sequence_from_config(config: Dict[str, Any]) -> str:
         )
     
     # Process sequence: add UTR, start/stop codons
-    sequence = sequence.upper()
-    if 'T' in sequence:
-        sequence = sequence.replace('T', 'U')
+    sequence = sequence.upper().replace('T', 'U')
     
+    # Add binder linker if specified
+    binder_linker = config.get('binder_linker', '')
+    binder_linker = binder_linker.upper().replace('T', 'U')
+    assert binder_linker == '' or len(binder_linker) % 3 == 0, f"Binder linker length must be a multiple of 3 but is {len(binder_linker)}"
+    if binder_linker:
+        sequence += binder_linker
+
+    # Add additional CAR codons if specified
+    additional_car_codons = config.get('additional_car_codons', '')
+    additional_car_codons = additional_car_codons.upper().replace('T', 'U')
+    assert additional_car_codons == '' or len(additional_car_codons) % 3 == 0, f"Additional CAR codons length must be a multiple of 3 but is {len(additional_car_codons)}"
+    if additional_car_codons:
+        sequence += additional_car_codons
+
+    # format just in case 
+    sequence = sequence.upper().replace('T', 'U')
+
     # Add 5' UTR if specified
     five_prime_utr = config.get('five_prime_utr', '')
+    five_prime_utr = five_prime_utr.upper().replace('T', 'U')
+    assert five_prime_utr == '' or len(five_prime_utr) % 3 == 0, f"5' UTR length must be a multiple of 3 but is {len(five_prime_utr)}"
+    
+    # Add start codon if needed
+    cond1 = 'AUG' in five_prime_utr
+    cond2 = 'AUG' in sequence
+    if cond1 and cond2:
+        print('Start codon found in both 5UTR and sequence, remove one')
+        sequence = sequence.replace('AUG', '', 1)
+    if (not cond1 and not cond2 ):
+        print('Start codon not found, adding before sequence')
+        sequence = 'AUG' + sequence
+        print("Added start codon (AUG)")
+
+    assert len(sequence) % 3 == 0, f"Check 1) Sequence length must be a multiple of 3 but is {len(sequence)}"
+    
     if five_prime_utr:
         sequence = five_prime_utr + sequence
         print(f"Added 5' UTR: {five_prime_utr}")
-    
-    # Add start codon if needed
-    if config.get('add_start_codon', True) and 'AUG' not in sequence[:20]:
-        sequence = 'AUG' + sequence
-        print("Added start codon (AUG)")
+
+    assert len(sequence) % 3 == 0, f"Check 2) Sequence length must be a multiple of 3 but is {len(sequence)}"
     
     # Add stop codon if needed
     stop_codons = ['UAA', 'UAG', 'UGA']
-    if config.get('add_stop_codon', True) and sequence[-3:] not in stop_codons:
+    if sequence[-3:] not in stop_codons:
+        print( f"Last codon found is {sequence[-3:]} which is not a stop codon")
         sequence = sequence + 'UAA'
         print("Added stop codon (UAA)")
     
+    assert len(sequence) % 3 == 0, f"Check 3) Sequence length must be a multiple of 3 but is {len(sequence)}"
+    
     # Add 3' UTR if specified (after stop codon)
     three_prime_utr = config.get('three_prime_utr', '')
+    three_prime_utr = three_prime_utr.upper().replace('T', 'U')
+    assert three_prime_utr == '' or len(three_prime_utr) % 3 == 0, f"3' UTR length must be a multiple of 3 but is {len(three_prime_utr)}"
     if three_prime_utr:
         three_prime_utr = three_prime_utr.upper().replace('T', 'U')
         sequence = sequence + three_prime_utr
         print(f"Added 3' UTR: {three_prime_utr}")
+    
+    assert len(sequence) % 3 == 0, f"Check 4) Sequence length must be a multiple of 3 but is {len(sequence)}"
     
     return sequence
 
@@ -343,8 +380,8 @@ class CodonOptimizerCLI:
                 beamsize=cfg['beamsize'],
             )
             
-            n_nts = len(system.sequence)
-            assert n_nts % 3 == 0, 'Sequence length must be a multiple of 3'
+            n_nts = system.n_nucleotides
+            assert n_nts % 3 == 0, f'Sequence length must be a multiple of 3 but is {n_nts}'
             n_cds = n_nts/3
             print(f"  Number of codons: {n_cds}")
             print(f"  Initial free energy (x nucleotide): {system.free_energy/n_nts:.4f} kcal/mol")

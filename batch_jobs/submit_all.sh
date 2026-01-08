@@ -5,22 +5,26 @@
 
 cd /gpfs/home/sangiole/Github-repos/protein_design/LinearFoldMCOpt/batch_jobs
 
-echo "Submitting 3 codon optimization jobs..."
+echo "Submitting 4 codon optimization jobs..."
 echo ""
 
-echo "Submitting job 1/3: luciferase_1BA3"
-qsub /gpfs/home/sangiole/Github-repos/protein_design/LinearFoldMCOpt/batch_jobs/luciferase_1BA3/luciferase_1BA3.pbs
+echo "Submitting job 1/4: T1"
+qsub /gpfs/home/sangiole/Github-repos/protein_design/LinearFoldMCOpt/batch_jobs/T1/T1.pbs
 sleep 0.5  # Small delay between submissions
 
-echo "Submitting job 2/3: gfp"
-qsub /gpfs/home/sangiole/Github-repos/protein_design/LinearFoldMCOpt/batch_jobs/gfp/gfp.pbs
+echo "Submitting job 2/4: T2"
+qsub /gpfs/home/sangiole/Github-repos/protein_design/LinearFoldMCOpt/batch_jobs/T2/T2.pbs
 sleep 0.5  # Small delay between submissions
 
-echo "Submitting job 3/3: test_nucleotide"
-qsub /gpfs/home/sangiole/Github-repos/protein_design/LinearFoldMCOpt/batch_jobs/test_nucleotide/test_nucleotide.pbs
+echo "Submitting job 3/4: T3"
+qsub /gpfs/home/sangiole/Github-repos/protein_design/LinearFoldMCOpt/batch_jobs/T3/T3.pbs
+sleep 0.5  # Small delay between submissions
+
+echo "Submitting job 4/4: T4"
+qsub /gpfs/home/sangiole/Github-repos/protein_design/LinearFoldMCOpt/batch_jobs/T4/T4.pbs
 sleep 0.5  # Small delay between submissions
 
 
 echo ""
-echo "All 3 jobs submitted!"
+echo "All 4 jobs submitted!"
 echo "Monitor with: qstat -u $USER"
