@@ -273,6 +273,78 @@ def get_sequence_from_config(config: Dict[str, Any]) -> str:
     
     return sequence
 
+def validate_sequence(sequence: str) -> bool:
+    """Validate the sequence."""
+    if len(sequence) % 3 != 0:
+        return False
+
+    # Process sequence: add UTR, start/stop codons
+    sequence = sequence.upper().replace('T', 'U')
+    
+    # Add binder linker if specified
+    binder_linker = config.get('binder_linker', '')
+    binder_linker = binder_linker.upper().replace('T', 'U')
+    assert binder_linker == '' or len(binder_linker) % 3 == 0, f"Binder linker length must be a multiple of 3 but is {len(binder_linker)}"
+    if binder_linker:
+        sequence += binder_linker
+
+    # Add additional CAR codons if specified
+    additional_car_codons = config.get('additional_car_codons', '')
+    additional_car_codons = additional_car_codons.upper().replace('T', 'U')
+    assert additional_car_codons == '' or len(additional_car_codons) % 3 == 0, f"Additional CAR codons length must be a multiple of 3 but is {len(additional_car_codons)}"
+    if additional_car_codons:
+        sequence += additional_car_codons
+
+    # format just in case 
+    sequence = sequence.upper().replace('T', 'U')
+
+    # Add 5' UTR if specified
+    five_prime_utr = config.get('five_prime_utr', '')
+    five_prime_utr = five_prime_utr.upper().replace('T', 'U')
+    assert five_prime_utr == '' or len(five_prime_utr) % 3 == 0, f"5' UTR length must be a multiple of 3 but is {len(five_prime_utr)}"
+    
+    # Add start codon if needed
+    cond1 = 'AUG' in five_prime_utr
+    cond2 = 'AUG' in sequence
+    if cond1 and cond2:
+        print('Start codon found in both 5UTR and sequence, remove one')
+        sequence = sequence.replace('AUG', '', 1)
+    if (not cond1 and not cond2 ):
+        print('Start codon not found, adding before sequence')
+        sequence = 'AUG' + sequence
+        print("Added start codon (AUG)")
+
+    assert len(sequence) % 3 == 0, f"Check 1) Sequence length must be a multiple of 3 but is {len(sequence)}"
+    
+    if five_prime_utr:
+        sequence = five_prime_utr + sequence
+        print(f"Added 5' UTR: {five_prime_utr}")
+
+    assert len(sequence) % 3 == 0, f"Check 2) Sequence length must be a multiple of 3 but is {len(sequence)}"
+    
+    # Add stop codon if needed
+    stop_codons = ['UAA', 'UAG', 'UGA']
+    if sequence[-3:] not in stop_codons:
+        print( f"Last codon found is {sequence[-3:]} which is not a stop codon")
+        sequence = sequence + 'UAA'
+        print("Added stop codon (UAA)")
+    
+    assert len(sequence) % 3 == 0, f"Check 3) Sequence length must be a multiple of 3 but is {len(sequence)}"
+    
+    # Add 3' UTR if specified (after stop codon)
+    three_prime_utr = config.get('three_prime_utr', '')
+    three_prime_utr = three_prime_utr.upper().replace('T', 'U')
+    assert three_prime_utr == '' or len(three_prime_utr) % 3 == 0, f"3' UTR length must be a multiple of 3 but is {len(three_prime_utr)}"
+    if three_prime_utr:
+        three_prime_utr = three_prime_utr.upper().replace('T', 'U')
+        sequence = sequence + three_prime_utr
+        print(f"Added 3' UTR: {three_prime_utr}")
+    
+    assert len(sequence) % 3 == 0, f"Check 4) Sequence length must be a multiple of 3 but is {len(sequence)}"
+    return True
+
+
+
 
 def get_cai_dict(species: str) -> dict:
     """Get the appropriate CAI dictionary for the species."""
@@ -413,7 +485,7 @@ class CodonOptimizerCLI:
             print(f"Final loss: {system.loss:.6f}")
             print(f"Final MFE: {system.mfe:.4f} kcal/mol per codon")
             print(f"Final free energy: {system.free_energy:.4f} kcal/mol per codon")
-            print(f"Final CAI: {np.exp(system.calculate_CAI_log):.4f}")
+            print(f"Final CAI: {np.exp(system.calculate_CAI_log()):.4f}")
             print(f"Structure: {system._structure[:50]}..." if len(system._structure) > 50 else f"Structure: {system._structure}")
             
             # Save optimized sequence
@@ -421,7 +493,7 @@ class CodonOptimizerCLI:
             with open(seq_filename, 'w') as f:
                 f.write(f"# Optimized mRNA sequence\n")
                 f.write(f"# Length: {len(system.codons_string)} nucleotides\n")
-                f.write(f"# CAI: {np.exp(system.calculate_CAI_log):.4f}\n")
+                f.write(f"# CAI: {np.exp(system.calculate_CAI_log()):.4f}\n")
                 f.write(f"# MFE: {system.mfe:.4f} kcal/mol\n")
                 f.write(f"\n{system.codons_string}\n")
             print(f"\nOptimized sequence saved to: {seq_filename}")
@@ -437,7 +509,7 @@ class CodonOptimizerCLI:
             
             return {
                 'final_loss': system.loss,
-                'final_cai': np.exp(system.calculate_CAI_log),
+                'final_cai': np.exp(system.calculate_CAI_log()),
                 'final_mfe': system.mfe,
                 'sequence': system.codons_string,
                 'structure': system._structure,

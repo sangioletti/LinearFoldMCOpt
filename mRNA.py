@@ -10,7 +10,7 @@ from utils import *
 class mRNA:
     def __init__(
         self, 
-        sequence:str, 
+        sequence:str|dict, 
         species:str, 
         aa_to_codon_cai:dict, 
         loss_weights:dict = {'mfe': 1.0, 'cai': 1.0},
@@ -27,25 +27,18 @@ class mRNA:
         # Retrieve codon adaptation index dictionary for the species
         assert species in ['human', 'mouse', 'rat', 'yeast', 'e_coli', 'other'], "Invalid species"
 
-        assert len(sequence) % 3 == 0, "Sequence length must be divisible by 3"
-        if 'T' in sequence:
-            if 'U' in sequence:
-                raise ValueError("Sequence contains both T and U, which is not allowed")
-            sequence = sequence.replace('T', 'U')
-            print(f"Sequence converted from T to U: {sequence}")        
-        
-        # Check that the sequence is divisible by 3
-        assert len(sequence) % 3 == 0, "Sequence length must be divisible by 3"
-        self.codons = sequence  # Sets ._codons and ._sequence
+        if isinstance(sequence, dict):
+            fivep_utr = sequence.get('fivep_utr_sequence', '')
+            threep_utr = sequence.get('threep_utr_sequence', '')
+            cds = sequence.get('cds_sequence', '')
+
+            sequence = self.validate_sequence(fivep_utr = fivep_utr, threep_utr = threep_utr, cds = cds)
+        else:
+            self.validate_sequence(sequence)
+
+        self.codons = sequence
+
         self.start_index = None
-        # Check that a start codon is present
-        try:
-            assert 'AUG' in self.codons, "Sequence must contain a start codon"
-        except AssertionError:
-            print( 'WARNING: Start codon added at beginning of sequence because it was not found' )
-            sequence = 'AUG' + sequence
-            self.codons = sequence
-            self.start_index = 0
 
         # Check that a stop codon is present
         self.stop_index()
@@ -67,8 +60,17 @@ class mRNA:
         self.retrieve_fivep_utr()  # Must be called before codon_mutability checks
         self.retrieve_threep_utr()  # Must be called before codon_mutability checks
 
+
+
         if codon_mutability is None:
                 codon_mutability = np.ones(len(self.codons))
+        
+        assert self._kozak_penalty()[1],"Kozak sequence is not present"
+
+        # Always make Kozak immutable
+        for i in range(self.retrieve_kozak()[0], self.retrieve_kozak()[1]+1):
+            codon_mutability[i] = 0
+
         if not modify_fivep_utr:
             for i in range(self.fivep_utr_index_range[1]+1):
                     codon_mutability[i] = 0 
@@ -128,12 +130,103 @@ class mRNA:
         self._average_stem_num_samples = 100  # Number of samples for average stem calculation
 
     @property
-    def sequence(self):
-        return ''.join(self.codons)
+    def codons_string(self) -> str:
+        """Return the sequence string from codons."""
+        if self._codons is None or len(self._codons) == 0:
+            raise ValueError("Codons not initialized")
+        
+        # Cache the string to avoid repeated joins
+        if self._cached_codons_string is None or self._codons_changed:
+            self._cached_codons_string = ''.join(self.codons)
+            self._codons_changed = False
+        
+        seq = self._cached_codons_string
+        
+        # Validate sequence contains only valid RNA nucleotides
+        valid_bases = set('AUCG')
+        if not all(base in valid_bases for base in seq):
+            invalid = [base for base in seq if base not in valid_bases]
+            raise ValueError(f"Sequence contains invalid nucleotides: {set(invalid)}")
+        return seq
+
+    def validate_sequence(self, fivep_utr:str, threep_utr:str, cds:str):
+        # First convert T to U and capitalize
+        fivep_utr = fivep_utr.upper().replace('T', 'U')
+        threep_utr = threep_utr.upper().replace('T', 'U')
+        cds = cds.upper().replace('T', 'U')
+        print( "Sequence converted to uppercase and T replaced with U")
+        
+        # Check length of each part is multiple of 3
+        assert len(fivep_utr) % 3 == 0, "5' UTR length must be divisible by 3"
+        assert len(threep_utr) % 3 == 0, "3' UTR length must be divisible by 3"
+        assert len(cds) % 3 == 0, "CDS length must be divisible by 3"
+
+        # Check that the 5'-utr does not contain more than a start codon at the end
+        if fivep_utr.count('AUG') > 1:
+            print(f"WARNING: 5' UTR contains more than a start codon: number of AUG: {fivep_utr.count('AUG')}")
+
+        # Check that CDS contains only valid codons
+        self.codons = cds # set the codons attribute
+        for codon in self.codons:
+            assert codon in codon_table.keys(), f"Invalid codon: {codon}"
+
+        # Check that fivep_utr ends with kozak sequence
+        kozak = ['CACCAUG','CGCCAUG']
+        if fivep_utr[-7:] not in kozak:
+            raise ValueError(f"5' UTR does not end with kozak sequence: {fivep_utr[-7:]}")
+
+        # If start codon is repeated in CDS, remove the second one
+        if cds[:3] == 'AUG':
+            cds = cds[3:]
+            print(f"Removed start codon from CDS because already present in 5' UTR: {cds}")
+        
+        # Check that CDS ends with a stop codon, otherwise add one 
+        if cds[-3:] not in ['UAA', 'UAG', 'UGA']:
+            cds = cds + 'UAA'
+            print(f"Added stop codon to CDS because it does not end with a stop codon: {cds}")
+
+        # Check the coding sequence has a single stop codon
+        mask = np.zeros(len(self.codons), dtype=bool)
+        for codon in aminoacid_to_codon_table['Stop']:
+            mask = mask | (self.codons == codon)
+        indices = np.arange(len(self.codons))
+        
+        stop_indices = indices[mask]
+        
+        if len(stop_indices) >1:
+            raise ValueError(f"Too many stop codons in the CDS, present at indices {stop_indices}")
+
+        self._start_index = len(fivep_utr)
+        self._stop_index = self._start_index + len(cds)
+        self._cds_index_range = (self._start_index, self._stop_index)
+        
+        sequence = fivep_utr + cds + threep_utr
+        # set the indices of the fivep_utr, cds and threep_utr
+        self._fivep_utr_index_range = (0, self._start_index - 1)
+        self._threep_utr_index_range = ( self._cds_index_range[1] + 1, len( sequence ) - 1 )
+
+        self._fivep_utr_sequence = fivep_utr
+        self._cds_sequence = cds
+        self._threep_utr_sequence = threep_utr
+        
+        # Check that all nucleotides are valid
+        assert all(base in 'AUCG' for base in sequence), "Sequence contains invalid nucleotides"
+        
+        self._sequence = {'fivep_utr': fivep_utr, 'cds': cds, 'threep_utr': threep_utr} 
+
+        return sequence
+
+
+    @property
+    def all_sequence(self) -> str:
+        seq = ''
+        for key, value in self._sequence.items():
+            seq += value
+        return seq 
 
     @property
     def n_nucleotides(self):
-        return len(self.sequence)
+        return len(self.all_sequence)
     
     def validate_weights(self):
         all_keys = set(self._loss_weights.keys())
@@ -196,10 +289,10 @@ class mRNA:
         return self._codons
 
     @codons.setter
-    def codons(self, sequence:str):
+    def codons(self, cds_sequence:str):
         codons = []
-        for i in range(0, len(sequence), 3):
-            codons.append(sequence[i:i+3])
+        for i in range(0, len(cds_sequence), 3):
+            codons.append(cds_sequence[i:i+3])
         self._codons = np.array(codons, dtype=str)
         self._codons_changed = True  # Mark codons as changed
         self._cached_codons_string = None  # Invalidate cached string
@@ -211,19 +304,18 @@ class mRNA:
     def calculate_CAI(self, form = 'log', normalise = False):
         if form == 'log':
             if normalise:
-                result = self.calculate_CAI_log/len(self.codons)
+                result = self.calculate_CAI_log()/len(self.codons)
             else:
-                result = self.calculate_CAI_log
+                result = self.calculate_CAI_log()
         elif form == 'linear':
             if normalise:
-                result = np.exp(self.calculate_CAI_log/len(self.codons))
+                result = np.exp(self.calculate_CAI_log()/len(self.codons))
             else:
-                result = np.exp(self.calculate_CAI_log)
+                result = np.exp(self.calculate_CAI_log())
         else:
             raise ValueError("Invalid form")
         return result
 
-    @property
     def calculate_CAI_log(self):
         """
         Vectorized calculation of the average log CAI of the mRNA sequence.
@@ -231,7 +323,6 @@ class mRNA:
         if self._cai_log is None or self._codons_changed:
             caidict = codon_adaptation_index.get(self._species, None)
         
-            # Get codons as numpy array of str
             codon_arr = self.codons
             # Get CAI values for each codon (use np.vectorize for clarity)
             cai_vec = np.vectorize(lambda codon: caidict.get(codon, 0.0))
@@ -377,7 +468,7 @@ class mRNA:
     @property
     def mfe(self) -> float:
         # Check sequence-based cache
-        seq = self.codons_string
+        seq = self.all_sequence
         seq_hash = hash(seq)
         
         if self._minimum_folding_energy is not None and \
@@ -439,7 +530,7 @@ class mRNA:
             float: Free energy in kcal/mol (normalized per codon)
         """
         # Check sequence-based cache
-        seq = self.codons_string
+        seq = self.all_sequence
         seq_hash = hash(seq)
         
         if self._free_energy is not None and hasattr(self, '_cached_seq_hash') and self._cached_seq_hash == seq_hash:
@@ -487,7 +578,7 @@ class mRNA:
             str: Structure in dot-bracket notation
         """
         # Check sequence-based cache
-        seq = self.codons_string
+        seq = self.all_sequence
         seq_hash = hash(seq)
         
         if self._structure is not None and \
@@ -538,7 +629,7 @@ class mRNA:
             np.ndarray: Base pair probability matrix (n x n)
         """
         # Check sequence-based cache
-        seq = self.codons_string
+        seq = self.all_sequence
         seq_hash = hash(seq)
         
         if self._prob_matrix is not None and \
@@ -652,26 +743,6 @@ class mRNA:
         return
 
     @property
-    def codons_string(self):
-        """Return the sequence string from codons."""
-        if self._codons is None or len(self._codons) == 0:
-            raise ValueError("Codons not initialized")
-        
-        # Cache the string to avoid repeated joins
-        if self._cached_codons_string is None or self._codons_changed:
-            self._cached_codons_string = ''.join(self.codons)
-            self._codons_changed = False
-        
-        seq = self._cached_codons_string
-        
-        # Validate sequence contains only valid RNA nucleotides
-        valid_bases = set('AUCG')
-        if not all(base in valid_bases for base in seq):
-            invalid = [base for base in seq if base not in valid_bases]
-            raise ValueError(f"Sequence contains invalid nucleotides: {set(invalid)}")
-        return seq
-
-    @property
     def cpg_count(self) -> int:
         """
         Count the number of CpG dinucleotides in the codon sequence.
@@ -681,7 +752,7 @@ class mRNA:
             int: Number of CpG dinucleotides in the sequence
         """
         if self._cpg_count is None or self._codons_changed:
-            seq = self.codons_string
+            seq = self.all_sequence
             count = 0
             for i in range(len(seq) - 1):
                 if seq[i] == 'C' and seq[i+1] == 'G':
@@ -702,7 +773,7 @@ class mRNA:
             loss += w_kozak * penalty 
         w_cai = self._loss_weights.get('cai', 0.0)
         if w_cai != 0.0:
-            loss += -w_cai * self.calculate_CAI_log
+            loss += -w_cai * self.calculate_CAI_log()
         w_mfe = self._loss_weights.get('mfe', 0.0)
         if w_mfe != 0.0:
             loss += w_mfe * self.mfe
@@ -732,7 +803,7 @@ class mRNA:
     def visualize_structure(self, filename="structure.svg", format="svg"):
         print(f"Visualizing structure with minimum energy in {filename}")
         try:
-            seq = self.codons_string
+            seq = self.all_sequence
             if not seq or len(seq) == 0:
                 raise ValueError("Empty sequence for visualization")
             
@@ -795,7 +866,7 @@ class mRNA:
         end_index = 3*end_index
         
         # Bounds checking
-        seq_len = len(self.codons_string)
+        seq_len = len(self.all_sequence)
         if start_index < 0 or end_index >= seq_len or start_index >= seq_len:
             print(f"Warning: Invalid indices for hybridisation_penalty: start={start_index}, end={end_index}, seq_len={seq_len}")
             return 0.0
@@ -826,79 +897,13 @@ class mRNA:
             print(f"Warning: Error computing hybridisation_penalty: {e}")
             return 0.0
 
-    def retrieve_fivep_utr(self):
-        """Find the UTR of the mRNA sequence, corresponding to the 5'UTR until the start codon
-        appears.
-        """
-        try:
-            mask = self.codons == 'AUG'
-            indices = np.arange( len( self.codons ) )
-            #print( f"Indices: {indices}" )
-            #print( f"Mask: {mask}" )
-            start_index = indices[ mask ].item(0)
-            #print( f"Start codon found at index {start_index}" )
-        except IndexError:
-            raise ValueError( "Start codon not found in the sequence" )
-
-        self._start_index = start_index
-        self._fivep_utr_index_range = (0, start_index - 1)
-        self._fivep_utr_sequence = self.codons_string[:start_index]
-        return self._fivep_utr_index_range
-    
-    def retrieve_threep_utr(self):
-        """Find the 3 UTR of the mRNA sequence, corresponding to the region after the stop codon"""
-        # Use _stop_index if already computed, otherwise call stop_index()
-        if not hasattr(self, '_stop_index') or self._stop_index is None:
-            stop_idx = self.stop_index()
-        else:
-            stop_idx = self._stop_index
-        self._threep_utr_index_range = (stop_idx + 1, len(self.codons) - 1)
-        self._threep_utr_sequence = self.codons_string[(stop_idx + 1) * 3:]  # 3 nucleotides per codon
-        return self._threep_utr_index_range
-
-    def retrieve_cds(self):
-        """Find the CDS of the mRNA sequence, corresponding to the region between the start and stop codons"""
-        start_index = self.retrieve_fivep_utr()[1] + 1
-        stop_index = self.retrieve_threep_utr()[0] - 1
-        self._cds_index_range = (start_index, stop_index)
-        self._cds_sequence = self.codons_string[start_index * 3:stop_index * 3]  # 3 nucleotides per codon
-        return self._cds_index_range
-
     @property
     def start_index(self):
-        if self._start_index is None:
-            self.retrieve_fivep_utr()
         return self._start_index
 
-    @start_index.setter
-    def start_index(self, value):
-        self._start_index = value
-        return
-
+    @property
     def stop_index(self):
-        """Find the stop codon - the FIRST stop codon AFTER the start codon.
-        
-        Additional stop codons in the 3' UTR are allowed and won't raise an error.
-        """
-        mask = np.zeros(len(self.codons), dtype=bool)
-        for codon in aminoacid_to_codon_table['Stop']:
-            mask = mask | (self.codons == codon)
-        indices = np.arange(len(self.codons))
-        
-        # Only look for stop codons AFTER the start codon (no circular dep)
-        start_idx = self.start_index
-        mask2 = indices > start_idx
-        mask = mask & mask2
-        stop_indices = indices[mask]
-        
-        if len(stop_indices) == 0:
-            raise ValueError(f"No stop codon found after start codon at index {start_idx}")
-        
-        # The FIRST stop codon after start is THE CDS stop codon
-        # Additional stop codons in 3' UTR are fine and ignored
-        _stop_index = stop_indices[0]
-        self._stop_index = _stop_index
-        return _stop_index
+        return self._stop_index
 
     @property
     def fivep_utr_index_range(self):
@@ -1018,7 +1023,7 @@ class mRNA:
             stem_struct = ''.join(stem_struct)
             
             # Get the sequence of the stem
-            seq = self.codons_string
+            seq = self.all_sequence
             stem_seq_5prime = seq[start_pos:start_pos + best_length]
             stem_seq_3prime = seq[end_pos - best_length + 1:end_pos + 1]
 
@@ -1047,7 +1052,7 @@ class mRNA:
         Returns:
             int: Total number of restriction sites found
         """
-        curr_sequence = get_sequence_as_dna(self.sequence)
+        curr_sequence = get_sequence_as_dna(self.all_sequence)
         total_count = 0
     
         for enzyme_name, site_seq in restriction_sites.items():
@@ -1221,7 +1226,7 @@ class mRNA:
                 restriction_value = loss_components['restriction_sites']
             else:
                 try:
-                    restriction_value = self.restriction_sites_count
+                    restriction_value = self.restriction_sites_count()
                 except Exception:
                     restriction_value = 0.0
             loss_values.append(restriction_value)
@@ -1340,7 +1345,7 @@ class mRNA:
             step: Current optimization step number
         """
         try:
-            seq = self.codons_string
+            seq = self.all_sequence
             if not seq or len(seq) == 0:
                 print(f"Warning: Empty sequence at step {step}, skipping structure plot save")
                 return
@@ -1401,7 +1406,7 @@ class mRNA:
             # Check each component and save if weight is not 0.0
             w_cai = self._loss_weights.get('cai', 0.0)
             if w_cai != 0.0:
-                cai_value = np.exp(self.calculate_CAI_log)
+                cai_value = np.exp(self.calculate_CAI_log())
                 f.write(f"cai, {cai_value:.6e}\n")
             
             w_mfe = self._loss_weights.get('mfe', 0.0)
@@ -1483,7 +1488,7 @@ class mRNA:
         """
         try:
             # Validate sequence
-            seq = self.codons_string
+            seq = self.all_sequence
             if not seq or len(seq) == 0:
                 raise ValueError("Empty sequence for structure sampling")
             
@@ -1706,13 +1711,13 @@ class mRNA:
                     self._codons_changed = True
                     self.reset(what=reset_what if reset_what else ['cai'])
                     continue
+                print(f"Delta loss = {new_loss - loss}")
                 if new_loss < loss:
                     # Always accept if loss decreases
                     loss = new_loss
                     accepted = True
                 else:
                     delta = new_loss - loss
-                    print(f"Delta loss = {delta}")
                     # Avoid division by zero or very small T
                     if T > 1e-10:
                         accept_probability = np.exp(-delta/T)
@@ -1749,7 +1754,7 @@ class mRNA:
                 print(f"Step {i} of {nsteps} completed. Current T: {T}")
                 energy = self.free_energy if self._pf_computed else self.mfe
                 print(f"x nucleotide quantities:")
-                n_nts = len( self.sequence )
+                n_nts = len( self.all_sequence )
                 print(f"Current loss: {loss/n_nts}, energy: {energy/n_nts}, cai (x codon): {self.calculate_CAI(form = 'linear',normalise=True)}")
                 
                 if len(recent_mutations) > 0:
@@ -1832,7 +1837,7 @@ class mRNA:
         # Save final loss components
         self.save_loss_components(nsteps)
         
-        print(f"Final loss: {loss}, mfe: {self.mfe}, cai: {np.exp(self.calculate_CAI_log)}")
+        print(f"Final loss: {loss}, mfe: {self.mfe}, cai: {np.exp(self.calculate_CAI_log())}")
         print(f"Statistics saved to {output_filename}")
 
     def start_from_optimal_cai(self):
@@ -1895,7 +1900,7 @@ if __name__ == "__main__":
     print(f"Optimized mfe (*codon): {system.mfe} kcal/mol per codon")
     print(f"Optimized mfe (total): {system.mfe*len(system.codons)} kcal/mol")
     print(f"McCaskill free-energy (*codon): {system.free_energy} kcal/mol per codon")
-    print(f"Optimized cai: {np.exp(system.calculate_CAI_log)}")
+    print(f"Optimized cai: {np.exp(system.calculate_CAI_log())}")
     print(f"Structure: {system._structure}")
     if system._prob_matrix is not None:
         print(f"P(i,j) matrix:")

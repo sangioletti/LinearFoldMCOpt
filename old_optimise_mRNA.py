@@ -72,7 +72,7 @@ print(f"Optimized loss: {system.loss}")
 print(f"Optimized mfe (*codon): {system.mfe} kcal/mol per codon")
 print(f"Optimized mfe (total): {system.mfe*len(system.codons)} kcal/mol")
 print(f"McCaskill free-energy (*codon): {system.free_energy} kcal/mol per codon")
-print(f"Optimized cai: {np.exp(system.calculate_CAI_log)}")
+print(f"Optimized cai: {np.exp(system.calculate_CAI_log())}")
 print(f"Structure: {system._structure}")
 if system._prob_matrix is not None:
     print(f"P(i,j) matrix:")
