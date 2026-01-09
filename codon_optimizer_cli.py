@@ -206,8 +206,7 @@ def get_sequence_from_config(config: Dict[str, Any]) -> str:
             "No sequence source provided. Specify one of: "
             "sequence, aa_sequence, pdb_id, or fasta_file"
         )
-    
-    # Process sequence: add UTR, start/stop codons
+
     sequence = sequence.upper().replace('T', 'U')
     
     # Add binder linker if specified
@@ -232,55 +231,37 @@ def get_sequence_from_config(config: Dict[str, Any]) -> str:
     five_prime_utr = five_prime_utr.upper().replace('T', 'U')
     assert five_prime_utr == '' or len(five_prime_utr) % 3 == 0, f"5' UTR length must be a multiple of 3 but is {len(five_prime_utr)}"
     
-    # Add start codon if needed
-    cond1 = 'AUG' in five_prime_utr
-    cond2 = 'AUG' in sequence
-    if cond1 and cond2:
-        print('Start codon found in both 5UTR and sequence, remove one')
-        sequence = sequence.replace('AUG', '', 1)
-    if (not cond1 and not cond2 ):
-        print('Start codon not found, adding before sequence')
-        sequence = 'AUG' + sequence
-        print("Added start codon (AUG)")
-
-    assert len(sequence) % 3 == 0, f"Check 1) Sequence length must be a multiple of 3 but is {len(sequence)}"
-    
-    if five_prime_utr:
-        sequence = five_prime_utr + sequence
-        print(f"Added 5' UTR: {five_prime_utr}")
-
-    assert len(sequence) % 3 == 0, f"Check 2) Sequence length must be a multiple of 3 but is {len(sequence)}"
-    
-    # Add stop codon if needed
-    stop_codons = ['UAA', 'UAG', 'UGA']
-    if sequence[-3:] not in stop_codons:
-        print( f"Last codon found is {sequence[-3:]} which is not a stop codon")
-        sequence = sequence + 'UAA'
-        print("Added stop codon (UAA)")
-    
-    assert len(sequence) % 3 == 0, f"Check 3) Sequence length must be a multiple of 3 but is {len(sequence)}"
-    
     # Add 3' UTR if specified (after stop codon)
     three_prime_utr = config.get('three_prime_utr', '')
     three_prime_utr = three_prime_utr.upper().replace('T', 'U')
     assert three_prime_utr == '' or len(three_prime_utr) % 3 == 0, f"3' UTR length must be a multiple of 3 but is {len(three_prime_utr)}"
-    if three_prime_utr:
-        three_prime_utr = three_prime_utr.upper().replace('T', 'U')
-        sequence = sequence + three_prime_utr
-        print(f"Added 3' UTR: {three_prime_utr}")
     
-    assert len(sequence) % 3 == 0, f"Check 4) Sequence length must be a multiple of 3 but is {len(sequence)}"
-    
-    return sequence
+    return five_prime_utr, sequence, three_prime_utr
 
-def validate_sequence(sequence: str) -> bool:
+def validate_length(sequence: str) -> bool:
     """Validate the sequence."""
     if len(sequence) % 3 != 0:
         return False
 
-    # Process sequence: add UTR, start/stop codons
+def validate_sequence_composition(sequence: str) -> bool:
+    # Make it all uppercase and replace T with U
     sequence = sequence.upper().replace('T', 'U')
-    
+    assert all(c in 'AUCG' for c in sequence), f"Sequence contains invalid characters: {sequence}"
+    return True
+
+def validate_kozak_and_start_codon(sequence: str) -> bool:
+    sequence = sequence.upper().replace('T', 'U')
+    if 'AUG' not in sequence:
+        return False
+    return True
+
+def sequence_has_stop_codon(sequence: str) -> bool:
+    sequence = sequence.upper().replace('T', 'U')
+    stop_codons = ['UAA', 'UAG', 'UGA']
+    if sequence[-3:] not in stop_codons:
+        return False
+    return True
+
     # Add binder linker if specified
     binder_linker = config.get('binder_linker', '')
     binder_linker = binder_linker.upper().replace('T', 'U')
