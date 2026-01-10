@@ -6,80 +6,64 @@ import time
 from codons import *
 from linearpartition_wrapper import LinearPartitionWrapper
 from utils import *
+import copy
 
 class mRNA:
     def __init__(
         self, 
-        sequence:str|dict, 
+        cds:str|None, 
+        fivep_utr:str|None,
+        threep_utr:str|None,
         species:str, 
         aa_to_codon_cai:dict, 
         loss_weights:dict = {'mfe': 1.0, 'cai': 1.0},
-        T_K = 310, 
-        modify_fivep_utr = False,
-        modify_threep_utr = False,
-        verbose = False,
-        initial_region_end_index = None,
-        beamsize = 100,
-        bpp_cutoff = 0.0,
-        start_from_optimal_cai = True,
-        codon_mutability : np.ndarray = None,
+        T_K : float = 310, 
+        modify_fivep_utr:bool = False,
+        modify_threep_utr:bool = False,
+        immutable_range : tuple[int, int]|None = None,
+        verbose:bool = False,
+        initial_region_end_index:int|None = None,
+        beamsize:int = 100,
+        bpp_cutoff : float = 0.0,
+        start_from_optimal_cai : bool = True,
         ):
         # Retrieve codon adaptation index dictionary for the species
-        assert species in ['human', 'mouse', 'rat', 'yeast', 'e_coli', 'other'], "Invalid species"
+        if species not in ['human', 'mouse', 'rat', 'yeast', 'e_coli', 'other']:
+            raise ValueError("Invalid species")
 
-        if isinstance(sequence, dict):
-            fivep_utr = sequence.get('fivep_utr_sequence', '')
-            threep_utr = sequence.get('threep_utr_sequence', '')
-            cds = sequence.get('cds_sequence', '')
+        # Validate the sequence
+        self.validate_and_store_sequence(fivep_utr = fivep_utr, threep_utr = threep_utr, cds = cds)
 
-            sequence = self.validate_sequence(fivep_utr = fivep_utr, threep_utr = threep_utr, cds = cds)
-        else:
-            self.validate_sequence(sequence)
-
-        self.codons = sequence
-
-        self.start_index = None
-
-        # Check that a stop codon is present
-        self.stop_index()
-
-        if initial_region_end_index is not None:
-            self.initial_region_end_index = initial_region_end_index
-        # Check that the sequence contains only valid codons
-        for codon in self.codons:
-            assert codon in codon_table.keys(), f"Invalid codon: {codon}"
-
-        self.initial_aminoacid = self.codons_to_amino_acids()
+        # Then set the codons. This is purely done using the cds sequence
+        self.codons = self.cds_sequence
         self._initial_codons = self.codons.copy()  # Store initial codon sequence for statistics
 
-        # Initialize UTR attributes BEFORE codon_mutability code accesses them
-        self._fivep_utr_index_range = None
-        self._fivep_utr_sequence = None
-        self._threep_utr_index_range = None
-        self._threep_utr_sequence = None
-        self.retrieve_fivep_utr()  # Must be called before codon_mutability checks
-        self.retrieve_threep_utr()  # Must be called before codon_mutability checks
+        # Set the initial region end index
+        if initial_region_end_index is not None:
+            self.initial_region_end_index = initial_region_end_index
 
+        self._initial_aminoacid = self.codons_to_amino_acids()
 
+        # Initialize mutability array
+        if immutable_range is None:
+                self.nucleotides_mutability = np.ones(len(self.sequence))
 
-        if codon_mutability is None:
-                codon_mutability = np.ones(len(self.codons))
+        # Initialize codon mutability array
+        self.codon_mutability = np.ones(len(self.codons))
         
-        assert self._kozak_penalty()[1],"Kozak sequence is not present"
-
         # Always make Kozak immutable
-        for i in range(self.retrieve_kozak()[0], self.retrieve_kozak()[1]+1):
-            codon_mutability[i] = 0
+        for i in range(self.kozak_index_range[0], self.kozak_index_range[1]+1):
+            self.nucleotides_mutability[i] = 0
 
         if not modify_fivep_utr:
             for i in range(self.fivep_utr_index_range[1]+1):
-                    codon_mutability[i] = 0 
+                    self.nucleotides_mutability[i] = 0
+
         if not modify_threep_utr:
             first_index = self.threep_utr_index_range[0]
             last_index = self.threep_utr_index_range[1]
             for i in range(first_index, last_index+1):
-                    codon_mutability[i] = 0 
-        self.codon_mutability = codon_mutability
+                    self.nucleotides_mutability[i] = 0 
 
         # Set these attributes before start_from_optimal_cai() is called
         self._species = species
@@ -90,11 +74,6 @@ class mRNA:
             print(f"Initial (Optimal CAI) codon sequence: {self._initial_codons}")
         else:
             print(f"Initial (Random) codon sequence: {self._initial_codons}")
-
-        assert self.n_nucleotides % 3 == 0, f"Sequence length must be divisible by 3 but is {self.n_nucleotides}"
-
-        print(f"Index of 5'UTR: {self.fivep_utr_index_range}")
-        print(f"Index of 3'UTR: {self.threep_utr_index_range}")
 
         self.verbose = verbose
         self.RT = 0.001987 * T_K  # kcal/(mol*K) * K
@@ -149,7 +128,7 @@ class mRNA:
             raise ValueError(f"Sequence contains invalid nucleotides: {set(invalid)}")
         return seq
 
-    def validate_sequence(self, fivep_utr:str, threep_utr:str, cds:str):
+    def validate_and_store_sequence(self, fivep_utr:str, threep_utr:str, cds:str):
         # First convert T to U and capitalize
         fivep_utr = fivep_utr.upper().replace('T', 'U')
         threep_utr = threep_utr.upper().replace('T', 'U')
@@ -157,9 +136,8 @@ class mRNA:
         print( "Sequence converted to uppercase and T replaced with U")
         
         # Check length of each part is multiple of 3
-        assert len(fivep_utr) % 3 == 0, "5' UTR length must be divisible by 3"
-        assert len(threep_utr) % 3 == 0, "3' UTR length must be divisible by 3"
-        assert len(cds) % 3 == 0, "CDS length must be divisible by 3"
+        if len(cds) % 3 != 0:
+            raise ValueError("CDS length is not divisible by 3: {len(cds)}")
 
         # Check that the 5'-utr does not contain more than a start codon at the end
         if fivep_utr.count('AUG') > 1:
@@ -167,7 +145,8 @@ class mRNA:
 
         # Check that CDS contains only valid codons
         self.codons = cds # set the codons attribute
-        for codon in self.codons:
+        print(f"Initial codons: {self._codons}")
+        for codon in self._codons:
             assert codon in codon_table.keys(), f"Invalid codon: {codon}"
 
         # Check that fivep_utr ends with kozak sequence
@@ -196,37 +175,123 @@ class mRNA:
         if len(stop_indices) >1:
             raise ValueError(f"Too many stop codons in the CDS, present at indices {stop_indices}")
 
+        # Define the final sequence
+        # Store the sequences in a dictionary
+        self.sequence = {'fivep_utr': fivep_utr, 'cds': cds, 'threep_utr': threep_utr}
+        
+        # set the indices of the fivep_utr, cds and threep_utr
         self._start_index = len(fivep_utr)
         self._stop_index = self._start_index + len(cds)
-        self._cds_index_range = (self._start_index, self._stop_index)
-        
-        sequence = fivep_utr + cds + threep_utr
-        # set the indices of the fivep_utr, cds and threep_utr
-        self._fivep_utr_index_range = (0, self._start_index - 1)
-        self._threep_utr_index_range = ( self._cds_index_range[1] + 1, len( sequence ) - 1 )
+        self.cds_index_range = (self._start_index, self._stop_index)
+        self.fivep_utr_index_range = (0, self._start_index - 1)
+        self.threep_utr_index_range = ( self.cds_index_range[1] + 1, len(self.sequence) - 1 )
 
-        self._fivep_utr_sequence = fivep_utr
-        self._cds_sequence = cds
-        self._threep_utr_sequence = threep_utr
         
         # Check that all nucleotides are valid
-        assert all(base in 'AUCG' for base in sequence), "Sequence contains invalid nucleotides"
-        
-        self._sequence = {'fivep_utr': fivep_utr, 'cds': cds, 'threep_utr': threep_utr} 
+        if not all(base in 'AUCG' for base in self.sequence):
+            raise ValueError("Sequence contains invalid nucleotides")
 
-        return sequence
+        return self.sequence
 
 
     @property
-    def all_sequence(self) -> str:
-        seq = ''
-        for key, value in self._sequence.items():
-            seq += value
-        return seq 
+    def sequence(self) -> str:
+        return self._sequence['fivep_utr'] + self._sequence['cds'] + self._sequence['threep_utr']
+
+    @sequence.setter
+    def sequence(self, value:dict):
+        self._sequence = value
+        return
+    
+    @property
+    def kozak_sequence(self) -> str:
+        return self._sequence['fivep_utr'][-9:]
+    
+    @property
+    def fivep_utr_sequence(self) -> str:
+        return self._sequence['fivep_utr']
+    
+    @fivep_utr_sequence.setter
+    def fivep_utr_sequence(self, value:str):
+        self._sequence['fivep_utr'] = value
+        return
+    
+    @property
+    def cds_sequence(self) -> str:
+        return self._sequence['cds']
+    
+    @cds_sequence.setter
+    def cds_sequence(self, value:str):
+        self._sequence['cds'] = value
+        return
+    
+    @property
+    def threep_utr_sequence(self) -> str:
+        return self._sequence['threep_utr']
+    
+    @threep_utr_sequence.setter
+    def threep_utr_sequence(self, value:str):
+        self._sequence['threep_utr'] = value
+        return
+
+    @property
+    def fivep_utr_index_range(self) -> tuple:
+        return self._fivep_utr_index_range
+    
+    @fivep_utr_index_range.setter
+    def fivep_utr_index_range(self, value:tuple):
+        self._fivep_utr_index_range = value
+        return
+    
+    @property
+    def kozak_index_range(self) -> tuple:
+        first, last = self._fivep_utr_index_range
+        return (first + last - 9, last)
+
+    @kozak_index_range.setter
+    def kozak_index_range(self, value:tuple):
+        self._kozak_index_range = value
+        return
+    
+    @property
+    def cds_index_range(self) -> tuple:
+        return self._cds_index_range
+
+    @cds_index_range.setter
+    def cds_index_range(self, value:tuple):
+        self._cds_index_range = value
+        return
+    
+    @property
+    def threep_utr_index_range(self) -> tuple:
+        return self._threep_utr_index_range
+
+    @threep_utr_index_range.setter
+    def threep_utr_index_range(self, value:tuple):
+        self._threep_utr_index_range = value
+        return
+
+    @property
+    def nucleotides_mutability(self):
+        return self._nucleotides_mutability
+
+    @nucleotides_mutability.setter
+    def nucleotides_mutability(self, value:np.ndarray):
+        self._nucleotides_mutability = value
+        return
+
+    @property
+    def codon_mutability(self):
+        return self._codon_mutability
+
+    @codon_mutability.setter
+    def codon_mutability(self, value:np.ndarray):
+        self._codon_mutability = value
+        return  
 
     @property
     def n_nucleotides(self):
-        return len(self.all_sequence)
+        return len(self.sequence)
     
     def validate_weights(self):
         all_keys = set(self._loss_weights.keys())
@@ -241,32 +306,68 @@ class mRNA:
             raise ValueError("Only one of mfe or fe can be non-zero")
         return
 
-    def _kozak_penalty(self):
-        # kozak_sequence = GCC(A/G)CCATG
-        # we accept defects in the first two positions,
-        # but still penalise them
-        kozak = ['CACCATG','CGCCATG','CACCAUG','CGCCAUG']
-        present = False
-        penalty = 0.0
-        fivep_utr_sequence = self.fivep_utr_sequence
-        for seq in kozak:
-            # Take the last 10 nucleotides of the 5' UTR
-            count = fivep_utr_sequence[-10:].count(seq)
-        if count == 0:
-            penalty += np.inf
-        else:
-            if fivep_utr_sequence[-10:-7] != 'GCC':
-                penalty += 1.0
-            present = True
-        return penalty, present 
-
-
     def codons_to_amino_acids(self):
         codons = self.codons
         amino_acids = []
         for codon in codons:
             amino_acids.append(codon_to_amino_acid_1L(codon))
         return amino_acids
+        
+    @property
+    def p_5p(self):
+        n_5p_utr = self.nucleotides_mutability[self.fivep_utr_index_range[0]:self.fivep_utr_index_range[1]].sum()
+        n_cds = self.nucleotides_mutability[self.cds_index_range[0]:self.cds_index_range[1]].sum()
+        n_3p_utr = self.nucleotides_mutability[self.threep_utr_index_range[0]:self.threep_utr_index_range[1]].sum()
+        
+        return n_5p_utr / (n_5p_utr + n_cds + n_3p_utr)
+
+    @property
+    def p_cds(self):
+        n_5p_utr = self.nucleotides_mutability[self.fivep_utr_index_range[0]:self.fivep_utr_index_range[1]].sum()
+        n_cds = self.nucleotides_mutability[self.cds_index_range[0]:self.cds_index_range[1]].sum()
+        n_3p_utr = self.nucleotides_mutability[self.threep_utr_index_range[0]:self.threep_utr_index_range[1]].sum()
+        
+        return n_cds / (n_5p_utr + n_cds + n_3p_utr)
+
+    @property
+    def p_3p(self):
+        n_5p_utr = self.nucleotides_mutability[self.fivep_utr_index_range[0]:self.fivep_utr_index_range[1]].sum()
+        n_cds = self.nucleotides_mutability[self.cds_index_range[0]:self.cds_index_range[1]].sum()
+        n_3p_utr = self.nucleotides_mutability[self.threep_utr_index_range[0]:self.threep_utr_index_range[1]].sum()
+        
+        return n_3p_utr / (n_5p_utr + n_cds + n_3p_utr)
+
+    def make_mutation(self):
+        region = np.random.choice(['5p_utr', 'cds', '3p_utr'], p = [self.p_5p, self.p_cds, self.p_3p])
+        
+        if region == '5p_utr':
+            # Exclude Kozak sequence
+            index = np.random.choice([self.fivep_utr_index_range[0],self.fivep_utr_index_range[1]-9])
+            nucleotide = self._sequence['fivep_utr'][index]
+            possible_nucleotides = set(['A', 'C', 'G', 'U']) - set(nucleotide)
+            new_nucleotide = np.random.choice(list(possible_nucleotides))
+            self._sequence['fivep_utr'][index] = new_nucleotide
+        elif region == 'cds':
+            current_codon, new_codon, index = self.propose_codon_mutation()
+            self._codons[index] = new_codon
+            self._sequence['cds'] = ''.join(self._codons)
+
+        elif region == '3p_utr':
+            index = np.random.choice([self.threep_utr_index_range[0],self.threep_utr_index_range[1]])
+            nucleotide = self._sequence['threep_utr'][index]
+            possible_nucleotides = set(['A', 'C', 'G', 'U']) - set(nucleotide)
+            new_nucleotide = np.random.choice(list(possible_nucleotides))
+            self._sequence['threep_utr'][index] = new_nucleotide
+
+        self._cached_seq_hash = None  # For free_energy caching
+        self._cached_mfe_seq_hash = None  # For mfe caching
+        self._cached_bpp_seq_hash = None  # For prob_matrix caching
+        self._cached_structure_seq_hash = None  # For structure caching
+        self._cached_codons_string = None  # For codons_string caching
+        self._codons_changed = True  #
+        
+        return 
+        
 
     def propose_codon_mutation(self):
         index_modifiable_codons = np.where(self.codon_mutability)[0]
@@ -284,10 +385,11 @@ class mRNA:
             print(f"Proposed mutation: {current_codon} to {new_codon} at index {index}")
         return current_codon, new_codon, index
 
+
     @property
     def codons(self):
         return self._codons
-
+    
     @codons.setter
     def codons(self, cds_sequence:str):
         codons = []
@@ -468,7 +570,7 @@ class mRNA:
     @property
     def mfe(self) -> float:
         # Check sequence-based cache
-        seq = self.all_sequence
+        seq = self.sequence
         seq_hash = hash(seq)
         
         if self._minimum_folding_energy is not None and \
@@ -530,7 +632,7 @@ class mRNA:
             float: Free energy in kcal/mol (normalized per codon)
         """
         # Check sequence-based cache
-        seq = self.all_sequence
+        seq = self.sequence
         seq_hash = hash(seq)
         
         if self._free_energy is not None and hasattr(self, '_cached_seq_hash') and self._cached_seq_hash == seq_hash:
@@ -578,7 +680,7 @@ class mRNA:
             str: Structure in dot-bracket notation
         """
         # Check sequence-based cache
-        seq = self.all_sequence
+        seq = self.sequence
         seq_hash = hash(seq)
         
         if self._structure is not None and \
@@ -629,7 +731,7 @@ class mRNA:
             np.ndarray: Base pair probability matrix (n x n)
         """
         # Check sequence-based cache
-        seq = self.all_sequence
+        seq = self.sequence
         seq_hash = hash(seq)
         
         if self._prob_matrix is not None and \
@@ -684,61 +786,25 @@ class mRNA:
         Reset cached values. If 'what' is None or 'all', resets everything.
         Otherwise, 'what' can be a list of strings: ['energy', 'structure', 'bpp', 'cai', 'cpg', 'stem']
         """
-        if what is None or what == 'all' or (isinstance(what, list) and 'all' in what):
-            # Reset everything (original behavior)
-            self._structure = None
-            self._minimum_folding_energy = None
-            self._free_energy = None
-            self._prob_matrix = None
-            self._cai_log = None
-            self._largest_stem = None
-            self._cpg_count = None
-            self._cached_average_stem_length = None
-            if hasattr(self, '_cached_seq_hash'):
-                self._cached_seq_hash = None
-            if hasattr(self, '_cached_mfe_seq_hash'):
-                self._cached_mfe_seq_hash = None
-            if hasattr(self, '_cached_bpp_seq_hash'):
-                self._cached_bpp_seq_hash = None
-            if hasattr(self, '_cached_structure_seq_hash'):
-                self._cached_structure_seq_hash = None
-            # Reset partition function computation flag
-            self._pf_computed = False
-        else:
-            # Selective reset based on what's needed
-            if isinstance(what, str):
-                what = [what]
-            
-            if 'energy' in what or 'fe' in what or 'mfe' in what:
-                self._free_energy = None
-                self._minimum_folding_energy = None
-                if hasattr(self, '_cached_seq_hash'):
-                    self._cached_seq_hash = None
-                if hasattr(self, '_cached_mfe_seq_hash'):
-                    self._cached_mfe_seq_hash = None
-                # Note: Don't reset fold_compound, just reset pf_computed flag
-                self._pf_computed = False
-            
-            if 'structure' in what:
-                self._structure = None
-                self._largest_stem = None
-                if hasattr(self, '_cached_structure_seq_hash'):
-                    self._cached_structure_seq_hash = None
-            
-            if 'bpp' in what or 'prob_matrix' in what:
-                self._prob_matrix = None
-                if hasattr(self, '_cached_bpp_seq_hash'):
-                    self._cached_bpp_seq_hash = None
-            
-            if 'cai' in what:
-                self._cai_log = None
-            
-            if 'cpg' in what:
-                self._cpg_count = None
-            
-            if 'stem' in what:
-                self._largest_stem = None
-                self._cached_average_stem_length = None
+        # Reset everything (original behavior)
+        self._structure = None
+        self._minimum_folding_energy = None
+        self._free_energy = None
+        self._prob_matrix = None
+        self._cai_log = None
+        self._largest_stem = None
+        self._cpg_count = None
+        self._cached_average_stem_length = None
+        if hasattr(self, '_cached_seq_hash'):
+            self._cached_seq_hash = None
+        if hasattr(self, '_cached_mfe_seq_hash'):
+            self._cached_mfe_seq_hash = None
+        if hasattr(self, '_cached_bpp_seq_hash'):
+            self._cached_bpp_seq_hash = None
+        if hasattr(self, '_cached_structure_seq_hash'):
+            self._cached_structure_seq_hash = None
+        # Reset partition function computation flag
+        self._pf_computed = False
         
         return
 
@@ -752,7 +818,7 @@ class mRNA:
             int: Number of CpG dinucleotides in the sequence
         """
         if self._cpg_count is None or self._codons_changed:
-            seq = self.all_sequence
+            seq = self.sequence
             count = 0
             for i in range(len(seq) - 1):
                 if seq[i] == 'C' and seq[i+1] == 'G':
@@ -762,15 +828,10 @@ class mRNA:
 
     @property
     def loss(self) -> float:
+        if self._loss is not None:
+            return self._loss
+
         loss = 0.0
-        # This is a sanity check. If the kozak sequence is not present, the loss is infinite.
-        # the sequence must be considered invalid
-        kozak_present, penalty = self._kozak_penalty()
-        if not kozak_present:
-            raise ValueError("Kozak sequence is not present")
-        else:
-            w_kozak = self._loss_weights.get('kozak', 0.0)
-            loss += w_kozak * penalty 
         w_cai = self._loss_weights.get('cai', 0.0)
         if w_cai != 0.0:
             loss += -w_cai * self.calculate_CAI_log()
@@ -798,12 +859,13 @@ class mRNA:
         w_codon_div = self._loss_weights.get('codon_divergence', 0.0)
         if w_codon_div != 0.0:
             loss += w_codon_div * self.codon_distribution_divergence
-        return loss
+        self._loss = loss
+        return self._loss
 
     def visualize_structure(self, filename="structure.svg", format="svg"):
         print(f"Visualizing structure with minimum energy in {filename}")
         try:
-            seq = self.all_sequence
+            seq = self.sequence
             if not seq or len(seq) == 0:
                 raise ValueError("Empty sequence for visualization")
             
@@ -832,18 +894,18 @@ class mRNA:
 
     @property
     def fivep_utr_hybridisation_penalty(self):
-        return self.hybridisation_penalty(self.fivep_utr_index_range[0], self.fivep_utr_index_range[1])
+        return self.hybridisation_penalty(self._fivep_utr_index_range[0], self._fivep_utr_index_range[1])
 
     @property
     def threep_utr_hybridisation_penalty(self):
-        return self.hybridisation_penalty(self.threep_utr_index_range[0], self.threep_utr_index_range[1])
+        return self.hybridisation_penalty(self._threep_utr_index_range[0], self._threep_utr_index_range[1])
 
     @property
     def initial_hybridisation_penalty(self):
         if self.initial_region_end_index is None:
             print(f"Initial region end index not set")
             raise ValueError("Initial region end index not set but weight not equal to 0")
-        return self.hybridisation_penalty(self.start_index, self.initial_region_end_index)
+        return self.hybridisation_penalty(0, self.initial_region_end_index)
 
     def hybridisation_penalty(self, start_index, end_index ):
         if start_index == end_index:
@@ -866,7 +928,7 @@ class mRNA:
         end_index = 3*end_index
         
         # Bounds checking
-        seq_len = len(self.all_sequence)
+        seq_len = len(self.sequence)
         if start_index < 0 or end_index >= seq_len or start_index >= seq_len:
             print(f"Warning: Invalid indices for hybridisation_penalty: start={start_index}, end={end_index}, seq_len={seq_len}")
             return 0.0
@@ -896,42 +958,6 @@ class mRNA:
         except Exception as e:
             print(f"Warning: Error computing hybridisation_penalty: {e}")
             return 0.0
-
-    @property
-    def start_index(self):
-        return self._start_index
-
-    @property
-    def stop_index(self):
-        return self._stop_index
-
-    @property
-    def fivep_utr_index_range(self):
-        """Return the index range of the UTR of the mRNA sequence."""
-        if self._fivep_utr_index_range is None:
-            self.retrieve_fivep_utr()
-        return self._fivep_utr_index_range
-
-    @property
-    def fivep_utr_sequence(self):
-        """Return the sequence of the UTR of the mRNA sequence."""
-        if self._fivep_utr_sequence is None:
-            self.retrieve_fivep_utr()
-        return self._fivep_utr_sequence
-    
-    @property
-    def threep_utr_index_range(self):
-        """Return the index range of the UTR of the mRNA sequence."""
-        if self._threep_utr_index_range is None:
-            self.retrieve_threep_utr()
-        return self._threep_utr_index_range
-
-    @property
-    def threep_utr_sequence(self):
-        """Return the sequence of the UTR of the mRNA sequence."""
-        if self._threep_utr_sequence is None:
-            self.retrieve_threep_utr()
-        return self._threep_utr_sequence
 
     @property
     def largest_stem_length(self):
@@ -1023,7 +1049,7 @@ class mRNA:
             stem_struct = ''.join(stem_struct)
             
             # Get the sequence of the stem
-            seq = self.all_sequence
+            seq = self.sequence
             stem_seq_5prime = seq[start_pos:start_pos + best_length]
             stem_seq_3prime = seq[end_pos - best_length + 1:end_pos + 1]
 
@@ -1052,7 +1078,7 @@ class mRNA:
         Returns:
             int: Total number of restriction sites found
         """
-        curr_sequence = get_sequence_as_dna(self.all_sequence)
+        curr_sequence = get_sequence_as_dna(self.sequence)
         total_count = 0
     
         for enzyme_name, site_seq in restriction_sites.items():
@@ -1242,17 +1268,6 @@ class mRNA:
                     codon_divergence_value = 0.0
             loss_values.append(codon_divergence_value)
         
-        w_kozak = self._loss_weights.get('kozak', 0.0)
-        if w_kozak != 0.0:
-            if 'kozak' in loss_components:
-                kozak_value = loss_components['kozak']
-            else:
-                try:
-                    _, kozak_value = self._kozak_penalty()
-                except Exception:
-                    kozak_value = 0.0
-            loss_values.append(kozak_value)
-        
         # Format with fixed-width columns (24 chars each) for alignment with header
         col_width = 24
         parts = [f"{step:<{col_width}}", f"{acceptance_rate:<{col_width}.4f}", f"{sequence_identity:<{col_width}.4f}"]
@@ -1345,7 +1360,7 @@ class mRNA:
             step: Current optimization step number
         """
         try:
-            seq = self.all_sequence
+            seq = self.sequence
             if not seq or len(seq) == 0:
                 print(f"Warning: Empty sequence at step {step}, skipping structure plot save")
                 return
@@ -1488,7 +1503,7 @@ class mRNA:
         """
         try:
             # Validate sequence
-            seq = self.all_sequence
+            seq = self.sequence
             if not seq or len(seq) == 0:
                 raise ValueError("Empty sequence for structure sampling")
             
@@ -1606,7 +1621,6 @@ class mRNA:
         # Perform optimisation of the codon usage of the mRNA sequence 
         nsteps = int(nsteps) * len(self.codons)
         T_schedule = T_opt * np.linspace(1, 0, nsteps)
-        loss = self.loss
         
         # Record start time for timing estimates
         start_time = time.time()
@@ -1651,8 +1665,6 @@ class mRNA:
             header_parts.append("Restriction_Sites")
         if self._loss_weights.get('codon_divergence', 0.0) != 0.0:
             header_parts.append("Codon_Divergence")
-        if self._loss_weights.get('kozak', 0.0) != 0.0:
-            header_parts.append("Kozak")
         
         # Format header with fixed-width columns (24 chars each) to match data rows
         col_width = 24
@@ -1660,85 +1672,36 @@ class mRNA:
         with open(output_filename, 'w') as f:
             f.write(header_line)
         
+        # Initialize loss
+        self._loss = None
+        curr_system = copy.deepcopy(self)
+        curr_loss = curr_system.loss
+        
         for i, T in enumerate( T_schedule ):
-            current_codon, new_codon, index = self.propose_codon_mutation()
+            self.make_mutation()
+            self.reset()
             accepted = False
-            
-            if new_codon != current_codon:
-                # Determine what needs to be reset based on loss weights
-                reset_what = []
-                if self._loss_weights.get('fe', 0.0) != 0.0 or self._loss_weights.get('mfe', 0.0) != 0.0:
-                    reset_what.append('energy')
-                if self._loss_weights.get('stem', 0.0) != 0.0:
-                    reset_what.append('structure')
-                    reset_what.append('stem')
-                if self._loss_weights.get('fivep_utr_hybridisation', 0.0) != 0.0:
-                    reset_what.append('fivep_utr_hybridisation')
-                if self._loss_weights.get('threep_utr_hybridisation', 0.0) != 0.0:
-                    reset_what.append('threep_utr_hybridisation')
-                if self._loss_weights.get('initial_hybridisation', 0.0) != 0.0:
-                    reset_what.append('initial_hybridisation')
-                if self._loss_weights.get('cai', 0.0) != 0.0:
-                    reset_what.append('cai')
-                if self._loss_weights.get('cpg', 0.0) != 0.0:
-                    reset_what.append('cpg')
-                if self._loss_weights.get('restriction_sites', 0.0) != 0.0:
-                    reset_what.append('restriction_sites')
-                if self._loss_weights.get('stem', 0.0) != 0.0:
-                    reset_what.append('stem')
-                if self._loss_weights.get('codon_divergence', 0.0) != 0.0:
-                    reset_what.append('codon_divergence')
-                
-                # Selective reset instead of full reset
-                if reset_what:
-                    self.reset(what=reset_what)
+            delta = self.loss - curr_system.loss
+            print(f"Delta loss = {delta}")
+            if delta < 0:
+                # Always accept if loss decreases
+                curr_system = copy.deepcopy(self)
+                accepted = True
+            else:
+                # Avoid division by zero or very small T
+                if T > 1e-10:
+                    accept_probability = np.exp(-delta/T)
                 else:
-                    # If no weights require energy/structure, minimal reset
-                    self.reset(what=['cai'])  # CAI might change
-                
-                # Make the mutation
-                self._codons[index] = new_codon
-                self._codons_changed = True  # Mark codons as changed
-                
-                try:
-                    new_loss = self.loss
-                except Exception as e:
-                    print(f"Error computing loss at step {i+1}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    # Revert mutation on error
-                    self._codons[index] = current_codon
-                    self._codons_changed = True
-                    self.reset(what=reset_what if reset_what else ['cai'])
-                    continue
-                print(f"Delta loss = {new_loss - loss}")
-                if new_loss < loss:
-                    # Always accept if loss decreases
-                    loss = new_loss
+                    # If T is very small, only accept if loss decreases
+                    accept_probability = 0.0
+                if np.random.rand() < accept_probability:
+                    print(f"Change accepted, delta loss = {delta}")
+                    # Accept with probability
+                    curr_system = copy.deepcopy(self)
                     accepted = True
                 else:
-                    delta = new_loss - loss
-                    # Avoid division by zero or very small T
-                    if T > 1e-10:
-                        accept_probability = np.exp(-delta/T)
-                    else:
-                        # If T is very small, only accept if loss decreases
-                        accept_probability = 0.0
-                    if np.random.rand() < accept_probability:
-                        print(f"Change accepted, delta loss = {delta}")
-                        # Accept with probability
-                        loss = new_loss
-                        accepted = True
-                    else:
-                        # Revert the mutation by restoring the original codon
-                        self._codons[index] = current_codon
-                        self._codons_changed = True
-                        # Selective reset after reverting
-                        if reset_what:
-                            self.reset(what=reset_what)
-                        accepted = False
-                        if verbose:
-                            print(f"Rejected mutation: {current_codon} to {new_codon} at index {index}")
+                    if verbose:
+                        print(f"Rejected mutation at index {index}")
                 
                 # Track acceptance for statistics (with step number)
                 acceptance_history.append((i + 1, accepted))
@@ -1754,8 +1717,8 @@ class mRNA:
                 print(f"Step {i} of {nsteps} completed. Current T: {T}")
                 energy = self.free_energy if self._pf_computed else self.mfe
                 print(f"x nucleotide quantities:")
-                n_nts = len( self.all_sequence )
-                print(f"Current loss: {loss/n_nts}, energy: {energy/n_nts}, cai (x codon): {self.calculate_CAI(form = 'linear',normalise=True)}")
+                n_nts = len( self.sequence )
+                print(f"Current loss: {self.loss/n_nts}, energy: {energy/n_nts}, cai (x codon): {self.calculate_CAI(form = 'linear',normalise=True)}")
                 
                 if len(recent_mutations) > 0:
                     # Extract just the accepted values
@@ -1837,7 +1800,7 @@ class mRNA:
         # Save final loss components
         self.save_loss_components(nsteps)
         
-        print(f"Final loss: {loss}, mfe: {self.mfe}, cai: {np.exp(self.calculate_CAI_log())}")
+        print(f"Final loss: {self._loss}, mfe: {self.mfe}, cai: {np.exp(self.calculate_CAI_log())}")
         print(f"Statistics saved to {output_filename}")
 
     def start_from_optimal_cai(self):

@@ -100,6 +100,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
         'T_K': 300,
         'modify_fivep_utr': False,
         'modify_threep_utr': False,
+        'mutable_range': None,
         'initial_region_end_index': 0,
         'beamsize': 100,
         'bpp_cutoff': 0.01,
@@ -332,7 +333,7 @@ class CodonOptimizerCLI:
             print(f"  Loss weights: {cfg['loss_weights']}")
             
             system = mRNA(
-                cds_sequence=cds_sequence,
+                cds=cds_sequence,
                 fivep_utr=fivep_utr,
                 threep_utr=threep_utr,
                 species=cfg['species'],
@@ -342,15 +343,15 @@ class CodonOptimizerCLI:
                 loss_weights=cfg['loss_weights'],
                 modify_fivep_utr=cfg['modify_fivep_utr'],
                 modify_threep_utr=cfg['modify_threep_utr'],
-                mutable_range=cfg['mutable_range'],
+                immutable_range=cfg['immutable_range'],
                 initial_region_end_index=cfg['initial_region_end_index'],
                 T_K=cfg['T_K'],
                 bpp_cutoff=cfg['bpp_cutoff'],
                 beamsize=cfg['beamsize'],
             )
             
-            print(f"  Number of codons: {system.n_cds}")
-            print(f"  Initial free energy (x nucleotide): {system.free_energy/system.n_nts:.4f} kcal/mol")
+            print(f"  Number of codons: {len(system.codons)}")
+            print(f"  Initial free energy (x nucleotide): {system.free_energy/system.n_nucleotides:.4f} kcal/mol")
             print(f"  Initial CAI (x codon): {system.calculate_CAI(form='linear',normalise=True):.4f}")
             
             # Run optimization

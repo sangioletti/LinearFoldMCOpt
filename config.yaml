@@ -51,6 +51,7 @@ beamsize: 100                   # LinearPartition beam size
 bpp_cutoff: 0.01               # Base pair probability cutoff
 start_from_optimal_cai: true    # Start from optimal CAI sequence
 verbose: false                  # Verbose output
+immutable_range: null       # Range of indices to mutate
 
 # Loss Function Weights
 # --------------------
