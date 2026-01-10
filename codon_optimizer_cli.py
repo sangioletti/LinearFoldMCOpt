@@ -170,8 +170,8 @@ def get_sequence_from_config(config: Dict[str, Any]) -> str:
     sequence = None
     
     # Priority 1: Direct nucleotide sequence
-    if config.get('sequence'):
-        sequence = config['sequence']
+    if config.get('cds_sequence'):
+        sequence = config['cds_sequence']
         print(f"Using provided nucleotide sequence (length: {len(sequence)})")
     
     # Priority 2: Direct amino acid sequence
@@ -207,125 +207,23 @@ def get_sequence_from_config(config: Dict[str, Any]) -> str:
             "sequence, aa_sequence, pdb_id, or fasta_file"
         )
 
-    sequence = sequence.upper().replace('T', 'U')
-    
-    # Add binder linker if specified
+    # Add binder linker, if specified
     binder_linker = config.get('binder_linker', '')
-    binder_linker = binder_linker.upper().replace('T', 'U')
-    assert binder_linker == '' or len(binder_linker) % 3 == 0, f"Binder linker length must be a multiple of 3 but is {len(binder_linker)}"
     if binder_linker:
         sequence += binder_linker
 
     # Add additional CAR codons if specified
-    additional_car_codons = config.get('additional_car_codons', '')
-    additional_car_codons = additional_car_codons.upper().replace('T', 'U')
-    assert additional_car_codons == '' or len(additional_car_codons) % 3 == 0, f"Additional CAR codons length must be a multiple of 3 but is {len(additional_car_codons)}"
-    if additional_car_codons:
-        sequence += additional_car_codons
-
-    # format just in case 
-    sequence = sequence.upper().replace('T', 'U')
+    extra_cds = config.get('extra_cds', '')
+    if extra_cds:
+        sequence += extra_cds
 
     # Add 5' UTR if specified
     five_prime_utr = config.get('five_prime_utr', '')
-    five_prime_utr = five_prime_utr.upper().replace('T', 'U')
-    assert five_prime_utr == '' or len(five_prime_utr) % 3 == 0, f"5' UTR length must be a multiple of 3 but is {len(five_prime_utr)}"
     
     # Add 3' UTR if specified (after stop codon)
     three_prime_utr = config.get('three_prime_utr', '')
-    three_prime_utr = three_prime_utr.upper().replace('T', 'U')
-    assert three_prime_utr == '' or len(three_prime_utr) % 3 == 0, f"3' UTR length must be a multiple of 3 but is {len(three_prime_utr)}"
     
     return five_prime_utr, sequence, three_prime_utr
-
-def validate_length(sequence: str) -> bool:
-    """Validate the sequence."""
-    if len(sequence) % 3 != 0:
-        return False
-
-def validate_sequence_composition(sequence: str) -> bool:
-    # Make it all uppercase and replace T with U
-    sequence = sequence.upper().replace('T', 'U')
-    assert all(c in 'AUCG' for c in sequence), f"Sequence contains invalid characters: {sequence}"
-    return True
-
-def validate_kozak_and_start_codon(sequence: str) -> bool:
-    sequence = sequence.upper().replace('T', 'U')
-    if 'AUG' not in sequence:
-        return False
-    return True
-
-def sequence_has_stop_codon(sequence: str) -> bool:
-    sequence = sequence.upper().replace('T', 'U')
-    stop_codons = ['UAA', 'UAG', 'UGA']
-    if sequence[-3:] not in stop_codons:
-        return False
-    return True
-
-    # Add binder linker if specified
-    binder_linker = config.get('binder_linker', '')
-    binder_linker = binder_linker.upper().replace('T', 'U')
-    assert binder_linker == '' or len(binder_linker) % 3 == 0, f"Binder linker length must be a multiple of 3 but is {len(binder_linker)}"
-    if binder_linker:
-        sequence += binder_linker
-
-    # Add additional CAR codons if specified
-    additional_car_codons = config.get('additional_car_codons', '')
-    additional_car_codons = additional_car_codons.upper().replace('T', 'U')
-    assert additional_car_codons == '' or len(additional_car_codons) % 3 == 0, f"Additional CAR codons length must be a multiple of 3 but is {len(additional_car_codons)}"
-    if additional_car_codons:
-        sequence += additional_car_codons
-
-    # format just in case 
-    sequence = sequence.upper().replace('T', 'U')
-
-    # Add 5' UTR if specified
-    five_prime_utr = config.get('five_prime_utr', '')
-    five_prime_utr = five_prime_utr.upper().replace('T', 'U')
-    assert five_prime_utr == '' or len(five_prime_utr) % 3 == 0, f"5' UTR length must be a multiple of 3 but is {len(five_prime_utr)}"
-    
-    # Add start codon if needed
-    cond1 = 'AUG' in five_prime_utr
-    cond2 = 'AUG' in sequence
-    if cond1 and cond2:
-        print('Start codon found in both 5UTR and sequence, remove one')
-        sequence = sequence.replace('AUG', '', 1)
-    if (not cond1 and not cond2 ):
-        print('Start codon not found, adding before sequence')
-        sequence = 'AUG' + sequence
-        print("Added start codon (AUG)")
-
-    assert len(sequence) % 3 == 0, f"Check 1) Sequence length must be a multiple of 3 but is {len(sequence)}"
-    
-    if five_prime_utr:
-        sequence = five_prime_utr + sequence
-        print(f"Added 5' UTR: {five_prime_utr}")
-
-    assert len(sequence) % 3 == 0, f"Check 2) Sequence length must be a multiple of 3 but is {len(sequence)}"
-    
-    # Add stop codon if needed
-    stop_codons = ['UAA', 'UAG', 'UGA']
-    if sequence[-3:] not in stop_codons:
-        print( f"Last codon found is {sequence[-3:]} which is not a stop codon")
-        sequence = sequence + 'UAA'
-        print("Added stop codon (UAA)")
-    
-    assert len(sequence) % 3 == 0, f"Check 3) Sequence length must be a multiple of 3 but is {len(sequence)}"
-    
-    # Add 3' UTR if specified (after stop codon)
-    three_prime_utr = config.get('three_prime_utr', '')
-    three_prime_utr = three_prime_utr.upper().replace('T', 'U')
-    assert three_prime_utr == '' or len(three_prime_utr) % 3 == 0, f"3' UTR length must be a multiple of 3 but is {len(three_prime_utr)}"
-    if three_prime_utr:
-        three_prime_utr = three_prime_utr.upper().replace('T', 'U')
-        sequence = sequence + three_prime_utr
-        print(f"Added 3' UTR: {three_prime_utr}")
-    
-    assert len(sequence) % 3 == 0, f"Check 4) Sequence length must be a multiple of 3 but is {len(sequence)}"
-    return True
-
-
-
 
 def get_cai_dict(species: str) -> dict:
     """Get the appropriate CAI dictionary for the species."""
@@ -353,7 +251,9 @@ class CodonOptimizerCLI:
     def optimize(
         self, 
         config: str,
-        sequence: Optional[str] = None,
+        cds_sequence: Optional[str] = None,
+        fivep_utr: Optional[str] = None,
+        threep_utr: Optional[str] = None,
         output_dir: Optional[str] = None,
         job_name: Optional[str] = None,
         identifier: Optional[str] = None,
@@ -363,7 +263,9 @@ class CodonOptimizerCLI:
         
         Args:
             config: Path to YAML configuration file
-            sequence: Optional sequence override (nucleotide or amino acid)
+            cds_sequence: Optional sequence override (nucleotide or amino acid)
+            fivep_utr: Optional 5' UTR override
+            threep_utr: Optional 3' UTR override
             output_dir: Optional output directory override
             job_name: Optional job name for output files
             identifier: Optional unique identifier for output files
@@ -372,13 +274,22 @@ class CodonOptimizerCLI:
         cfg = load_config(config)
         
         # Override sequence if provided via command line
-        if sequence:
+        if cds_sequence:
             # Detect if it's amino acid or nucleotide
-            if all(c in 'ACDEFGHIKLMNPQRSTVWY*X' for c in sequence.upper()):
-                cfg['aa_sequence'] = sequence
-                cfg['sequence'] = None
+            if all(c in 'ACDEFGHIKLMNPQRSTVWY*X' for c in cds_sequence.upper()):
+                if all(c in 'AUGC' for c in cds_sequence.upper().replace( 'T', 'U')):
+                    cfg['cds_sequence'] = cds_sequence
+                else:
+                    # If it's amino acid sequence, convert to nucleotide
+                    cds_sequence = aa_to_codon_sequence(cds_sequence)
+                    cfg['cds_sequence'] = cds_sequence
             else:
-                cfg['sequence'] = sequence
+                cfg['cds_sequence'] = cds_sequence
+        
+        if fivep_utr:
+            cfg['fivep_utr'] = fivep_utr
+        if threep_utr:
+            cfg['threep_utr'] = threep_utr
         
         # Determine unique identifier
         # Priority: CLI arg > config file > auto-generate
@@ -407,19 +318,23 @@ class CodonOptimizerCLI:
         
         try:
             # Get sequence
-            nucleotide_sequence = get_sequence_from_config(cfg)
+            fivep_utr, cds_sequence, threep_utr = get_sequence_from_config(cfg)
             
             # Get CAI dictionary
             cai_dict = get_cai_dict(cfg['species'])
+
+            all_sequence = fivep_utr + cds_sequence + threep_utr
             
             # Create mRNA system
             print(f"\nInitializing mRNA system...")
-            print(f"  Sequence length: {len(nucleotide_sequence)} nucleotides")
+            print(f"  Sequence length: {len(all_sequence)} nucleotides")
             print(f"  Species: {cfg['species']}")
             print(f"  Loss weights: {cfg['loss_weights']}")
             
             system = mRNA(
-                sequence=nucleotide_sequence,
+                cds_sequence=cds_sequence,
+                fivep_utr=fivep_utr,
+                threep_utr=threep_utr,
                 species=cfg['species'],
                 aa_to_codon_cai=cai_dict,
                 start_from_optimal_cai=cfg['start_from_optimal_cai'],
@@ -427,17 +342,15 @@ class CodonOptimizerCLI:
                 loss_weights=cfg['loss_weights'],
                 modify_fivep_utr=cfg['modify_fivep_utr'],
                 modify_threep_utr=cfg['modify_threep_utr'],
+                mutable_range=cfg['mutable_range'],
                 initial_region_end_index=cfg['initial_region_end_index'],
                 T_K=cfg['T_K'],
                 bpp_cutoff=cfg['bpp_cutoff'],
                 beamsize=cfg['beamsize'],
             )
             
-            n_nts = system.n_nucleotides
-            assert n_nts % 3 == 0, f'Sequence length must be a multiple of 3 but is {n_nts}'
-            n_cds = n_nts/3
-            print(f"  Number of codons: {n_cds}")
-            print(f"  Initial free energy (x nucleotide): {system.free_energy/n_nts:.4f} kcal/mol")
+            print(f"  Number of codons: {system.n_cds}")
+            print(f"  Initial free energy (x nucleotide): {system.free_energy/system.n_nts:.4f} kcal/mol")
             print(f"  Initial CAI (x codon): {system.calculate_CAI(form='linear',normalise=True):.4f}")
             
             # Run optimization
