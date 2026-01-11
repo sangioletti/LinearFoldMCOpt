@@ -100,7 +100,8 @@ def load_config(config_path: str) -> Dict[str, Any]:
         'T_K': 300,
         'modify_fivep_utr': False,
         'modify_threep_utr': False,
-        'mutable_range': None,
+        'immutable_fivep_utr_range': None,
+        'immutable_threep_utr_range': None,
         'initial_region_end_index': 0,
         'beamsize': 100,
         'bpp_cutoff': 0.01,
@@ -209,11 +210,13 @@ def get_sequence_from_config(config: Dict[str, Any]) -> str:
         )
 
     # Add binder linker, if specified
+    print(f"Adding binder linker to CDS: {config.get('binder_linker', '')}")
     binder_linker = config.get('binder_linker', '')
     if binder_linker:
         sequence += binder_linker
 
     # Add additional CAR codons if specified
+    print(f"Adding additional CAR codons to CDS: {config.get('extra_cds', '')}")
     extra_cds = config.get('extra_cds', '')
     if extra_cds:
         sequence += extra_cds
@@ -343,7 +346,8 @@ class CodonOptimizerCLI:
                 loss_weights=cfg['loss_weights'],
                 modify_fivep_utr=cfg['modify_fivep_utr'],
                 modify_threep_utr=cfg['modify_threep_utr'],
-                immutable_range=cfg['immutable_range'],
+                immutable_fivep_utr_range=cfg['immutable_fivep_utr_range'],
+                immutable_threep_utr_range=cfg['immutable_threep_utr_range'],
                 initial_region_end_index=cfg['initial_region_end_index'],
                 T_K=cfg['T_K'],
                 bpp_cutoff=cfg['bpp_cutoff'],
@@ -376,11 +380,29 @@ class CodonOptimizerCLI:
             # Print results
             print(f"\n{'='*60}")
             print("OPTIMIZATION COMPLETE")
+
+            # Print final results
+            # Check that coding part of the sequence codes for the same amino acid sequence
+            # chosen initially:
+
+            # Get amino acid sequence from codons
+            initial_aa_sequence = system._initial_aminoacid
+            aa_sequence = system.codons_to_amino_acids()
+
+            print(f"Initial amino acid sequence: {initial_aa_sequence}")
+            print(f"Optimized amino acid sequence: {aa_sequence}")
+            
+            if aa_sequence != initial_aa_sequence:
+                print(f"{'='*60}")
+                print("WARNING: The optimized sequence codes for a different amino acid sequence than the initial sequence.")
+                print(f"Initial amino acid sequence: {initial_aa_sequence}")
+                print(f"Optimized amino acid sequence: {aa_sequence}")
+            
             print(f"{'='*60}")
             print(f"Final loss: {system.loss:.6f}")
-            print(f"Final MFE: {system.mfe:.4f} kcal/mol per codon")
-            print(f"Final free energy: {system.free_energy:.4f} kcal/mol per codon")
-            print(f"Final CAI: {np.exp(system.calculate_CAI_log()):.4f}")
+            print(f"Final MFE (x nucleotide): {system.mfe/system.n_nucleotides:.4f} kcal/mol")
+            print(f"Final free energy (x nucleotide): {system.free_energy/system.n_nucleotides:.4f} kcal/mol")
+            print(f"Final CAI (x codon): {system.calculate_CAI(form='linear',normalise=True):.4f}")
             print(f"Structure: {system._structure[:50]}..." if len(system._structure) > 50 else f"Structure: {system._structure}")
             
             # Save optimized sequence
@@ -388,8 +410,8 @@ class CodonOptimizerCLI:
             with open(seq_filename, 'w') as f:
                 f.write(f"# Optimized mRNA sequence\n")
                 f.write(f"# Length: {len(system.codons_string)} nucleotides\n")
-                f.write(f"# CAI: {np.exp(system.calculate_CAI_log()):.4f}\n")
-                f.write(f"# MFE: {system.mfe:.4f} kcal/mol\n")
+                f.write(f"# CAI (x codon): {system.calculate_CAI(form='linear',normalise=True):.4f}\n")
+                f.write(f"# MFE (x nucleotide): {system.mfe/system.n_nucleotides:.4f} kcal/mol\n")
                 f.write(f"\n{system.codons_string}\n")
             print(f"\nOptimized sequence saved to: {seq_filename}")
             
@@ -404,9 +426,11 @@ class CodonOptimizerCLI:
             
             return {
                 'final_loss': system.loss,
-                'final_cai': np.exp(system.calculate_CAI_log()),
-                'final_mfe': system.mfe,
-                'sequence': system.codons_string,
+                'final_cai': system.calculate_CAI(form='linear',normalise=True),
+                'final_mfe': system.mfe/system.n_nucleotides,
+                'fivep_utr': system.fivep_utr_sequence,
+                'cds_sequence (minus start codon)': system.codons_string,
+                'threep_utr': system.threep_utr_sequence,
                 'structure': system._structure,
             }
             

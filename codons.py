@@ -183,7 +183,7 @@ amino_acid_to_1_letter = {
     'Tryptophan': 'W',
     'Tyrosine': 'Y',
     'Valine': 'V',
-    'Stop': None,   # or *
+    'Stop': "*",   # or *
 }
 
 amino_acid_1L_to_full_name = {short: full for full, short in amino_acid_to_1_letter.items()}

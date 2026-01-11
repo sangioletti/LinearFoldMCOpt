@@ -20,7 +20,8 @@ class mRNA:
         T_K : float = 310, 
         modify_fivep_utr:bool = False,
         modify_threep_utr:bool = False,
-        immutable_range : tuple[int, int]|None = None,
+        immutable_fivep_utr_range : tuple[int, int]|None = None,
+        immutable_threep_utr_range : tuple[int, int]|None = None,
         verbose:bool = False,
         initial_region_end_index:int|None = None,
         beamsize:int = 100,
@@ -44,9 +45,9 @@ class mRNA:
 
         self._initial_aminoacid = self.codons_to_amino_acids()
 
-        # Initialize mutability array
-        if immutable_range is None:
-                self.nucleotides_mutability = np.ones(len(self.sequence))
+        # Initialize mutability array (all mutable by default)
+        self.nucleotides_mutability = np.ones(len(self.sequence))
+        
 
         # Initialize codon mutability array
         self.codon_mutability = np.ones(len(self.codons))
@@ -64,6 +65,19 @@ class mRNA:
             last_index = self.threep_utr_index_range[1]
             for i in range(first_index, last_index+1):
                     self.nucleotides_mutability[i] = 0 
+        
+        # Apply immutable_range if specified
+        if immutable_fivep_utr_range is not None:
+            start, end = immutable_fivep_utr_range
+            for i in range(start, min(end+1, len(self.sequence))):
+                self.nucleotides_mutability[i] = 0
+        
+        # Apply immutable_range if specified
+        if immutable_threep_utr_range is not None:
+            start, end = immutable_threep_utr_range
+            first_index = self.threep_utr_index_range[0]
+            for i in range(first_index + start, first_index + end+1):
+                self.nucleotides_mutability[i] = 0
 
         # Set these attributes before start_from_optimal_cai() is called
         self._species = species
@@ -137,22 +151,19 @@ class mRNA:
         
         # Check length of each part is multiple of 3
         if len(cds) % 3 != 0:
-            raise ValueError("CDS length is not divisible by 3: {len(cds)}")
+            raise ValueError(f"CDS length is not divisible by 3: {len(cds)}")
 
         # Check that the 5'-utr does not contain more than a start codon at the end
         if fivep_utr.count('AUG') > 1:
             print(f"WARNING: 5' UTR contains more than a start codon: number of AUG: {fivep_utr.count('AUG')}")
 
-        # Check that CDS contains only valid codons
-        self.codons = cds # set the codons attribute
-        print(f"Initial codons: {self._codons}")
-        for codon in self._codons:
-            assert codon in codon_table.keys(), f"Invalid codon: {codon}"
-
         # Check that fivep_utr ends with kozak sequence
-        kozak = ['CACCAUG','CGCCAUG']
-        if fivep_utr[-7:] not in kozak:
-            raise ValueError(f"5' UTR does not end with kozak sequence: {fivep_utr[-7:]}")
+        kozak = ['ACCAUG','GCCAUG']
+        if fivep_utr[-6:] not in kozak:
+            raise ValueError(f"5' UTR does not end with kozak sequence: {fivep_utr[-6:]}")
+        strict_kozak = ['CACCAUG','CGCCAUG']
+        if fivep_utr[-7:] not in strict_kozak:
+            print(f"WARNING: 5' UTR does not end with strict kozak sequence: {fivep_utr[-7:]}")
 
         # If start codon is repeated in CDS, remove the second one
         if cds[:3] == 'AUG':
@@ -164,16 +175,21 @@ class mRNA:
             cds = cds + 'UAA'
             print(f"Added stop codon to CDS because it does not end with a stop codon: {cds}")
 
+        # NOW set codons after all CDS modifications
+        self.codons = cds
+        print(f"Initial codons: {self._codons}")
+        
+        # Check that CDS contains only valid codons
+        for codon in self._codons:
+            if codon not in codon_table:
+                raise ValueError(f"Invalid codon: {codon}")
+
         # Check the coding sequence has a single stop codon
-        mask = np.zeros(len(self.codons), dtype=bool)
-        for codon in aminoacid_to_codon_table['Stop']:
-            mask = mask | (self.codons == codon)
-        indices = np.arange(len(self.codons))
+        stop_codons = ['UAA', 'UAG', 'UGA']
+        stop_count = sum(1 for c in self._codons if c in stop_codons)
         
-        stop_indices = indices[mask]
-        
-        if len(stop_indices) >1:
-            raise ValueError(f"Too many stop codons in the CDS, present at indices {stop_indices}")
+        if stop_count > 1:
+            raise ValueError(f"Too many stop codons in the CDS: {stop_count} found")
 
         # Define the final sequence
         # Store the sequences in a dictionary
@@ -245,8 +261,9 @@ class mRNA:
     
     @property
     def kozak_index_range(self) -> tuple:
-        first, last = self._fivep_utr_index_range
-        return (first + last - 9, last)
+        """Return Kozak sequence range (last 9 nucleotides of 5' UTR including start codon)."""
+        _, last = self._fivep_utr_index_range
+        return (last - 8, last)  # 9 positions: indices [last-8, last] inclusive
 
     @kozak_index_range.setter
     def kozak_index_range(self, value:tuple):
@@ -311,6 +328,7 @@ class mRNA:
         amino_acids = []
         for codon in codons:
             amino_acids.append(codon_to_amino_acid_1L(codon))
+            print(f"Codon: {codon}, Amino acid: {amino_acids[-1]}")
         return amino_acids
         
     @property
@@ -341,30 +359,61 @@ class mRNA:
         region = np.random.choice(['5p_utr', 'cds', '3p_utr'], p = [self.p_5p, self.p_cds, self.p_3p])
         
         if region == '5p_utr':
-            # Exclude Kozak sequence
-            index = np.random.choice([self.fivep_utr_index_range[0],self.fivep_utr_index_range[1]-9])
-            nucleotide = self._sequence['fivep_utr'][index]
-            possible_nucleotides = set(['A', 'C', 'G', 'U']) - set(nucleotide)
-            new_nucleotide = np.random.choice(list(possible_nucleotides))
-            self._sequence['fivep_utr'][index] = new_nucleotide
+            # Get mutable positions in 5' UTR (respects nucleotides_mutability)
+            start, end = self.fivep_utr_index_range
+            mutable_positions = np.where(self.nucleotides_mutability[start:end+1] > 0)[0]
+            if len(mutable_positions) == 0:
+                return  # No mutable positions
+            index = np.random.choice(mutable_positions)
+            seq = self._sequence['fivep_utr']
+            nucleotide = seq[index]
+            possible_nucleotides = ['A', 'C', 'G', 'U']
+            possible_nucleotides.remove(nucleotide)
+            new_nucleotide = np.random.choice(possible_nucleotides)
+            if self.verbose:
+                print(f"Mutating 5' UTR: {seq[index]} -> {new_nucleotide}")
+            # Strings are immutable - rebuild the string
+            self._sequence['fivep_utr'] = seq[:index] + new_nucleotide + seq[index+1:]
+            
         elif region == 'cds':
-            current_codon, new_codon, index = self.propose_codon_mutation()
+            iii = 0
+            while True:
+                if self.verbose:
+                    print(f"Mutating CDS, trial {iii}")
+                current_codon, new_codon, index = self.propose_codon_mutation()
+                if current_codon != new_codon:
+                    break
+                iii += 1
             self._codons[index] = new_codon
             self._sequence['cds'] = ''.join(self._codons)
 
         elif region == '3p_utr':
-            index = np.random.choice([self.threep_utr_index_range[0],self.threep_utr_index_range[1]])
-            nucleotide = self._sequence['threep_utr'][index]
-            possible_nucleotides = set(['A', 'C', 'G', 'U']) - set(nucleotide)
-            new_nucleotide = np.random.choice(list(possible_nucleotides))
-            self._sequence['threep_utr'][index] = new_nucleotide
+            # Get mutable positions in 3' UTR (respects nucleotides_mutability)
+            start_nt, end_nt = self.threep_utr_index_range
+            # Convert to local index within 3' UTR
+            threep_utr_len = len(self._sequence['threep_utr'])
+            mutable_positions = np.where(self.nucleotides_mutability[start_nt:start_nt+threep_utr_len] > 0)[0]
+            if len(mutable_positions) == 0:
+                return  # No mutable positions
+            index = np.random.choice(mutable_positions)
+            seq = self._sequence['threep_utr']
+            nucleotide = seq[index]
+            possible_nucleotides = ['A', 'C', 'G', 'U']
+            possible_nucleotides.remove(nucleotide)
+            new_nucleotide = np.random.choice(possible_nucleotides)
+            if self.verbose:
+                print(f"Mutating 3' UTR: {seq[index]} -> {new_nucleotide}")
+            # Strings are immutable - rebuild the string
+            self._sequence['threep_utr'] = seq[:index] + new_nucleotide + seq[index+1:]
 
-        self._cached_seq_hash = None  # For free_energy caching
-        self._cached_mfe_seq_hash = None  # For mfe caching
-        self._cached_bpp_seq_hash = None  # For prob_matrix caching
-        self._cached_structure_seq_hash = None  # For structure caching
-        self._cached_codons_string = None  # For codons_string caching
-        self._codons_changed = True  #
+        # Invalidate all caches
+        self._loss = None  # Critical: invalidate cached loss
+        self._cached_seq_hash = None
+        self._cached_mfe_seq_hash = None
+        self._cached_bpp_seq_hash = None
+        self._cached_structure_seq_hash = None
+        self._cached_codons_string = None
+        self._codons_changed = True
         
         return 
         
@@ -794,6 +843,7 @@ class mRNA:
         self._cai_log = None
         self._largest_stem = None
         self._cpg_count = None
+        self._loss = None  # Critical: invalidate cached loss
         self._cached_average_stem_length = None
         if hasattr(self, '_cached_seq_hash'):
             self._cached_seq_hash = None
@@ -808,6 +858,38 @@ class mRNA:
         
         return
 
+    def save_state(self) -> dict:
+        """
+        Save current mutable state for lightweight backup.
+        Much faster than copy.deepcopy() for optimization loops.
+        
+        Returns:
+            dict: State dictionary that can be passed to restore_state()
+        """
+        return {
+            'codons': self._codons.copy(),
+            'sequence': dict(self._sequence),  # shallow copy of dict with string values
+            'loss': self._loss,
+            'cai_log': self._cai_log,
+            'cpg_count': self._cpg_count,
+        }
+
+    def restore_state(self, state: dict):
+        """
+        Restore mutable state from a saved state dictionary.
+        
+        Args:
+            state: State dictionary from save_state()
+        """
+        self._codons = state['codons']
+        self._sequence = state['sequence']
+        self._loss = state['loss']
+        self._cai_log = state['cai_log']
+        self._cpg_count = state['cpg_count']
+        self._codons_changed = True
+        # Reset computed values that depend on sequence
+        self.reset()
+
     @property
     def cpg_count(self) -> int:
         """
@@ -819,11 +901,8 @@ class mRNA:
         """
         if self._cpg_count is None or self._codons_changed:
             seq = self.sequence
-            count = 0
-            for i in range(len(seq) - 1):
-                if seq[i] == 'C' and seq[i+1] == 'G':
-                    count += 1
-            self._cpg_count = count
+            # Use optimized C string method instead of Python loop
+            self._cpg_count = seq.count('CG')
         return self._cpg_count
 
     @property
@@ -921,11 +1000,6 @@ class mRNA:
         # Safety check
         if prob_matrix is None or not hasattr(prob_matrix, 'shape'):
             return 0.0
-        
-        # Get the hybridisation probability matrix for the initial part of the mRNA sequence
-        # Remember P(i,j) is the probability of the base pair (i,j), not the codon pair (i,j)
-        start_index = 3*start_index
-        end_index = 3*end_index
         
         # Bounds checking
         seq_len = len(self.sequence)
@@ -1277,20 +1351,38 @@ class mRNA:
         
         if isinstance(output_file, str):
             # If it's a file path, open in append mode
-            with open(output_file, 'a') as f:
+            with open(output_file, 'a+') as f:
                 f.write(line)
         else:
             # If it's already a file object, write to it
             output_file.write(line)
             output_file.flush()
         
-        # Save codon sequence to sequence_{step}.txt
-        sequence_filename = f"sequence_{step}.txt"
+        # Save codon sequence to sequence_sampled.txt
+        sequence_filename = f"cds_sequence_sampled.txt"
         try:
-            with open(sequence_filename, 'w') as f:
+            with open(sequence_filename, 'a') as f:
                 # Write the codon sequence as space-separated codons
                 codon_sequence = ' '.join(self.codons)
-                f.write(codon_sequence + '\n')
+                start_codon = self.fivep_utr_sequence[-3:]
+                f.write( f"{step}: " + start_codon + " " + codon_sequence + '\n')
+        except Exception as e:
+            print(f"Warning: Could not save codon sequence to {sequence_filename}: {e}")
+
+        # Save codon sequence to sequence_sampled.txt
+        sequence_filename = f"fivep_utr_sequence_sampled.txt"
+        try:
+            with open(sequence_filename, 'a') as f:
+                # Write the codon sequence as space-separated codons
+                f.write( f"{step}: " + self.fivep_utr_sequence[:-3] + '\n')
+        except Exception as e:
+            print(f"Warning: Could not save codon sequence to {sequence_filename}: {e}")
+        # Save codon sequence to sequence_sampled.txt
+        sequence_filename = f"threep_utr_sequence_sampled.txt"
+        try:
+            with open(sequence_filename, 'a') as f:
+                # Write the codon sequence as space-separated codons
+                f.write( f"{step}: " + self.threep_utr_sequence + '\n')
         except Exception as e:
             print(f"Warning: Could not save codon sequence to {sequence_filename}: {e}")
 
@@ -1672,20 +1764,26 @@ class mRNA:
         with open(output_filename, 'w') as f:
             f.write(header_line)
         
-        # Initialize loss
+        # Initialize loss and save initial state
         self._loss = None
-        curr_system = copy.deepcopy(self)
-        curr_loss = curr_system.loss
+        best_state = self.save_state()  # Lightweight state save instead of deepcopy
+        best_loss = self.loss
         
         for i, T in enumerate( T_schedule ):
+            # Save state before mutation
+            prev_state = self.save_state()
+            prev_loss = self.loss
+            
             self.make_mutation()
             self.reset()
             accepted = False
-            delta = self.loss - curr_system.loss
-            print(f"Delta loss = {delta}")
+            new_loss = self.loss
+            delta = new_loss - prev_loss
             if delta < 0:
                 # Always accept if loss decreases
-                curr_system = copy.deepcopy(self)
+                print(f"Change accepted, delta loss = {delta}")
+                best_state = self.save_state()
+                best_loss = new_loss
                 accepted = True
             else:
                 # Avoid division by zero or very small T
@@ -1697,14 +1795,18 @@ class mRNA:
                 if np.random.rand() < accept_probability:
                     print(f"Change accepted, delta loss = {delta}")
                     # Accept with probability
-                    curr_system = copy.deepcopy(self)
+                    best_state = self.save_state()
+                    best_loss = new_loss
                     accepted = True
                 else:
+                    # Reject: restore previous state
+                    print(f"Change rejected, delta loss = {delta}")
+                    self.restore_state(prev_state)
                     if verbose:
-                        print(f"Rejected mutation at index {index}")
+                        print(f"Rejected mutation")
                 
-                # Track acceptance for statistics (with step number)
-                acceptance_history.append((i + 1, accepted))
+            # Track acceptance for statistics (with step number)
+            acceptance_history.append((i + 1, accepted))
             
             # Save statistics every n_sample steps
             if i % n_sample == 0:

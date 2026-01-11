@@ -14,10 +14,10 @@ identifier: null  # leave null for auto-generation
 # sequence: "AUGUUUAAAGGG..."
 
 # Option 2: Direct amino acid sequence (1-letter code)
-# aa_sequence: "MFKG..."
+aa_sequence: "FKGFKGFKGHHHHKG"
 
 # Option 3: PDB ID to fetch sequence from
-pdb_id: "1BA3"
+pdb_id: null #"1BA3"
 pdb_chain: null  # Optional: specify chain (e.g., "A")
 
 # Option 4: FASTA file path
@@ -26,7 +26,7 @@ pdb_chain: null  # Optional: specify chain (e.g., "A")
 # Sequence Processing
 # -------------------
 # 5'UTR taken from plasmid pLenti-NGFR-mCA8LHBCMA
-five_prime_utr: "GTTTAGTGAACCGTCAGATCGCCTGGAGACGCCATCCACGCTGTTTTGACCTCCATAGAAGACACCGGAGCTTCTAGAGCCACC" # 5' UTR to prepend (before start codon).
+five_prime_utr: "GTTTAGTGAACCGTCAGATCGCCTGGAGACGCCATCCACGCTGTTTTGACCTCCATAGAAGACACCGGAGCTTCTAGAGCCACCATG" # 5' UTR to prepend (before start codon).
 
 # 3'UTR taken from plasmid pLenti-NGFR-mCA8LHBCMA. Include WTRE (factor to transport outside nucleus) and 3'LTR
 three_prime_utr: "GtcgacaatcaacctctggattacaaaatttgtgaaagattgactggtattcttaactatgttgctccttttacgctatgtggatacgctgctttaatgcctttgtatcatgctattgcttcccgtatggctttcattttctcctccttgtataaatcctggttgctgtctctttatgaggagttgtggcccgttgtcaggcaacgtggcgtggtgtgcactgtgtttgctgacgcaacccccactggttggggcattgccaccacctgtcagctcctttccgggactttcgctttccccctccctattgccacggcggaactcatcgccgcctgccttgcccgctgctggacaggggctcggctgttgggcactgacaattccgtggtgttgtcggggaagctgacgtcctttccttggctgctcgcctgtgttgccacctggattctgcgcgggacgtccttctgctacgtcccttcggccctcaatccagcggaccttccttcccgcggcctgctgccggctctgcggcctcttccgcgtcttcgccttcgccctcagacgagtcggatctccctttgggccgcctccccgcctggaattcgagctcggtacCTTTAAGACCAATGACTTACAAGGCAGCTGTAGATCTTAGCCACTTTTTAAAAGAAAAGGGGGGACTGGAAGGGCTAATTCACTCCCAACGAAGACAAGATCTGCTTTTTGCTTGTACTGGGTCTCTCTGGTTAGACCAGATCTGAGCCTGGGAGCTCTCTGGCTAACTAGGGAACCCACTGCTTAAGCCTCAATAAAGCTTGCCTTGAGTGCTTCAAGTAGTGTGTGCCCGTCTGTTGTGTGACTCTGGTAACTAGAGATCCCTCAGACCCTTTTAGTCAGTGTGGAAAATCTCTAGCAGTA"
@@ -35,7 +35,7 @@ three_prime_utr: "Gtcgacaatcaacctctggattacaaaatttgtgaaagattgactggtattcttaactatgt
 binder_linker: "ggctccacctctggatccggcaagcccggatctggcgagggatccaccaagggc"
 
 # Additional codons to be added after the binder linker, if present
-additional_car_codons: "gcggccgcaattgaagttatgtatcctcctccttacctagacgctagcaatgagaagagcaatggaaccattatccatgtgaaagggaaacacctttgtccaagtcccctatttcccggaccttctaagcccttttgggtgctggtggtggttgggggagtcctggcttgctatagcttgctagtaacagtggcctttattattttctgggtgaggagtaagaggagcaggctcctgcacagtgactacatgaacatgactccccgccgccccgggcccacccgcaagcattaccagccctatgccccaccacgcgacttcgcagcctatcgctccagagtgaagttcagcaggagcgcagacgcccccgcgtaccagcagggccagaaccagctctataacgagctcaatctaggacgaagagaggagtacgatgttttggacaagagacgtggccgggaccctgagatggggggaaagccgagaaggaagaaccctcaggaaggcctgtacaatgaactgcagaaagataagatggcggaggcctacagtgagattgggatgaaaggcgagcgccggaggggcaaggggcacgatggcctttaccagggtctcagtacagccaccaaggacacctacgacgcccttcacatgcaggccctgccccctcgctaa"
+extra_cds: "gcggccgcaattgaagttatgtatcctcctccttacctagacgctagcaatgagaagagcaatggaaccattatccatgtgaaagggaaacacctttgtccaagtcccctatttcccggaccttctaagcccttttgggtgctggtggtggttgggggagtcctggcttgctatagcttgctagtaacagtggcctttattattttctgggtgaggagtaagaggagcaggctcctgcacagtgactacatgaacatgactccccgccgccccgggcccacccgcaagcattaccagccctatgccccaccacgcgacttcgcagcctatcgctccagagtgaagttcagcaggagcgcagacgcccccgcgtaccagcagggccagaaccagctctataacgagctcaatctaggacgaagagaggagtacgatgttttggacaagagacgtggccgggaccctgagatggggggaaagccgagaaggaagaaccctcaggaaggcctgtacaatgaactgcagaaagataagatggcggaggcctacagtgagattgggatgaaaggcgagcgccggaggggcaaggggcacgatggcctttaccagggtctcagtacagccaccaaggacacctacgacgcccttcacatgcaggccctgccccctcgctaa"
 
 # Species Configuration
 # --------------------
@@ -44,14 +44,15 @@ species: "human"  # Options: human, e_coli, mouse, rat, yeast, other
 # mRNA System Parameters
 # ----------------------
 T_K: 300                        # Temperature in Kelvin
-modify_fivep_utr: false               # Allow mutations in 5' UTR region
+modify_fivep_utr: true               # Allow mutations in 5' UTR region
 modify_threep_utr: false               # Allow mutations in 3' UTR region
 initial_region_end_index: 30    # End of initial region for hybridization penalty
 beamsize: 100                   # LinearPartition beam size
 bpp_cutoff: 0.01               # Base pair probability cutoff
 start_from_optimal_cai: true    # Start from optimal CAI sequence
 verbose: false                  # Verbose output
-immutable_range: null       # Range of indices to mutate
+immutable_fivep_utr_range: [0, 30]       # Range of indices to mutate
+immutable_threep_utr_range: null       # Range of indices to mutate
 
 # Loss Function Weights
 # --------------------
