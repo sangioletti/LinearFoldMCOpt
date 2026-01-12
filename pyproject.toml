@@ -38,6 +38,7 @@ dependencies = [
     "fire>=0.4.0",
     "pyyaml>=5.4.0",
     "matplotlib>=3.3.0",
+    "requests>=2.25.0",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +48,7 @@ pdb = [
 all = [
     "biotite>=0.30.0",
     "scipy>=1.7.0",
+    "requests>=2.25.0",
 ]
 dev = [
     "pytest>=6.0.0",
@@ -67,11 +69,8 @@ Repository = "https://github.com/sangiole/protein_design"
 Issues = "https://github.com/sangiole/protein_design/issues"
 
 [tool.setuptools]
-packages = ["linearfold_mcopt"]
+packages = ["src"]
 py-modules = [
-    "mRNA",
-    "codons",
-    "linearpartition_wrapper",
     "codon_optimizer_cli",
     "batch_codon_optimizer",
 ]
@@ -101,7 +100,7 @@ exclude = '''
 [tool.isort]
 profile = "black"
 line_length = 100
-known_first_party = ["mRNA", "codons", "linearpartition_wrapper"]
+known_first_party = ["src"]
 
 [tool.mypy]
 python_version = "3.8"

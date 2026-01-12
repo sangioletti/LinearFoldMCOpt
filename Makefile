@@ -26,7 +26,6 @@ BUILD_DIR=build
 objects=bin/linearpartition_v bin/linearpartition_c
 
 linearpartition: src/LinearPartition.cpp $(DEPS) 
-		chmod +x linearpartition draw_bpp_plot draw_heatmap
 		mkdir -p bin
 		$(CC) $(ARCH_FLAGS) src/LinearPartition.cpp $(CFLAGS) -Dlpv -o bin/linearpartition_v 
 		$(CC) $(ARCH_FLAGS) src/LinearPartition.cpp $(CFLAGS) -o bin/linearpartition_c

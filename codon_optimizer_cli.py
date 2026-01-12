@@ -22,13 +22,13 @@ from typing import Optional, Dict, Any, List, Union
 from pathlib import Path
 
 # Import from the local modules
-from codons import (
+from src.codons import (
     human_aa_to_codon_cai, 
     ecoli_aa_to_codon_cai,
     codon_table
 )
 
-from utils import (
+from src.utils import (
     codon_to_amino_acid_1L,
     codon_to_amino_acid_3L,
     aa_1L_to_codons,
@@ -36,7 +36,7 @@ from utils import (
     aa_to_codon_sequence
 )
 
-from mRNA import mRNA, aa_to_codon_sequence
+from src.mRNA import mRNA, aa_to_codon_sequence
 
 
 def fetch_sequence_from_pdb(pdb_id: str, chain: Optional[str] = None, target_path: str = ".") -> str:

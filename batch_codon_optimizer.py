@@ -111,7 +111,7 @@ def generate_pbs_script(
     script_path: str,
     python_path: str,
     queue: str = "hx",
-    walltime: str = "72:00:00",
+    walltime: str = "24:00:00",
     ncpus: int = 1,
     mem: str = "8GB",
     modules: Optional[List[str]] = None,
@@ -184,7 +184,7 @@ def generate_slurm_script(
     script_path: str,
     python_path: str,
     partition: str = "hx",
-    time: str = "72:00:00",
+    time: str = "24:00:00",
     cpus: int = 1,
     mem: str = "8G",
     modules: Optional[List[str]] = None,
@@ -272,8 +272,8 @@ Or with PDB IDs:
                         help="Job scheduler type (default: pbs)")
     parser.add_argument("--queue", "-q", default="hx",
                         help="Queue/partition name (default: hx)")
-    parser.add_argument("--walltime", "-t", default="72:00:00",
-                        help="Wall time limit (default: 72:00:00)")
+    parser.add_argument("--walltime", "-t", default="24:00:00",
+                        help="Wall time limit (default: 24:00:00)")
     parser.add_argument("--ncpus", "-n", type=int, default=1,
                         help="Number of CPUs per job (default: 1)")
     parser.add_argument("--mem", "-m", default="8GB",
