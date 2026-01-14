@@ -90,4 +90,4 @@ output:
   save_prob_matrix: true
 
 plasmid_file: "kite_plasmid.gb"
-plasmid_modifiable_region: [3765, 6200]
+plasmid_modifiable_region: [3759, 6200]

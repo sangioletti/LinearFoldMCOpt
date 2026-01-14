@@ -20,6 +20,8 @@ import string
 import random
 from typing import Optional, Dict, Any, List, Union
 from pathlib import Path
+import copy
+
 
 # Import from the local modules
 from src.codons import (
@@ -374,6 +376,8 @@ class CodonOptimizerCLI:
                 bpp_cutoff=cfg['bpp_cutoff'],
                 beamsize=cfg['beamsize'],
             )
+
+            print(f"Initial mRNA sequence: {len(system.sequence)} codons: {system.codons_string}")
             
             print(f"  Number of codons: {len(system.codons)}")
             print(f"  Initial free energy (x nucleotide): {system.free_energy/system.n_nucleotides:.4f} kcal/mol")
@@ -392,9 +396,18 @@ class CodonOptimizerCLI:
                     insert_features = move_features_to_insertion_point( start_nt, insert_features )
                     insert_plasmid = Plasmid(sequence=fivep_utr_seq + car_cds_seq + threep_utr_seq, features=insert_features)
                     print(f"Inserted CAR features: {insert_features}")
-                    base_plasmid.merge_plasmid(insert_plasmid=insert_plasmid, start_cut=start_nt, end_cut=stop_nt)
+                    print(f"Inserted plasmid length: {len(insert_plasmid.sequence)}")
+                    print(f"Length of cut region: {stop_nt - start_nt}")
+                    print(f"Base plasmid length: {len(base_plasmid.sequence)}, expected length: {len(base_plasmid.sequence) - (stop_nt - start_nt) + len(insert_plasmid.sequence)}")
+                    cai_optimized_plasmid = copy.deepcopy(base_plasmid)
+                    cai_optimized_plasmid = cai_optimized_plasmid.merge_plasmid(insert_plasmid=insert_plasmid, start_cut=start_nt, end_cut=stop_nt)
                     name = os.path.basename('CAI_optimized_plasmid.dna' )
-                    base_plasmid.to_genbank(name)
+                    cai_optimized_plasmid.to_genbank(name)
+                    if len( base_plasmid.sequence ) - (stop_nt - start_nt) + len( insert_plasmid.sequence ) != len(cai_optimized_plasmid.sequence):
+                        print(f"WARNING: The length of the CAI optimized plasmid is not equal to the length of the base plasmid minus the length of the modifiable region.")
+                        print(f"Base plasmid length: {len(base_plasmid.sequence)}")
+                        print(f"CAI optimized plasmid length: {len(cai_optimized_plasmid.sequence)}")
+                        raise ValueError("The length of the CAI optimized plasmid is not equal to the length of the base plasmid minus the length of the modifiable region.")
             
             # Run optimization
             opt_cfg = cfg['optimization']

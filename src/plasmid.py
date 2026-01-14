@@ -210,27 +210,69 @@ class Plasmid:
         if start_cut == end_cut:
             raise ValueError(f"Start and end cut positions must be different. Start: {start_cut}, End: {end_cut}")
         
+        # Check for features that partially overlap the cut region
+        if self.features:
+            for feature_name, feature_dict in self.features.items():
+                feat_start = feature_dict['start']
+                feat_end = feature_dict['end']
+                # Check if feature is completely within cut region (OK to remove)
+                completely_within = feat_start >= start_cut and feat_end <= end_cut
+                # Check if feature partially overlaps (ERROR)
+                partially_overlaps = (
+                    (feat_start < start_cut < feat_end) or  # Starts before, ends within
+                    (feat_start < end_cut < feat_end) or    # Starts within, ends after
+                    (feat_start < start_cut and feat_end > end_cut)  # Spans entire cut region
+                )
+                if partially_overlaps:
+                    raise ValueError(
+                        f"Feature '{feature_name}' (position {feat_start}..{feat_end}) partially overlaps "
+                        f"with the cut region ({start_cut}..{end_cut}). Features must either be completely "
+                        f"within the cut region (and will be removed) or completely outside it."
+                    )
+        
         new_sequence = self.sequence[:start_cut] + insert_plasmid.sequence + self.sequence[end_cut:]
-        new_features = self.features.copy()
-        # Now remove features whose location is within the start_cut and end_cut range
-        for feature_name, feature_dict in self.features.items():
-            if feature_dict['start'] >= start_cut and feature_dict['end'] <= end_cut:
-                del new_features[feature_name]
+        new_features = {}
+        
+        # Calculate the shift amount for features after the cut region
+        cut_length = end_cut - start_cut
+        insert_length = len(insert_plasmid.sequence)
+        shift_amount = insert_length - cut_length
+        
+        # Process features from the base plasmid
+        if self.features:
+            for feature_name, feature_dict in self.features.items():
+                feat_start = feature_dict['start']
+                feat_end = feature_dict['end']
+                
+                # Remove features completely within the cut region
+                if feat_start >= start_cut and feat_end <= end_cut:
+                    continue  # Skip this feature (it's being removed)
+                
+                # Adjust positions for features after the cut region
+                if feat_start >= end_cut:
+                    # Feature is completely after the cut region, shift it
+                    adjusted_feature = feature_dict.copy()
+                    adjusted_feature['start'] = feat_start + shift_amount
+                    adjusted_feature['end'] = feat_end + shift_amount
+                    new_features[feature_name] = adjusted_feature
+                else:
+                    # Feature is before the cut region, keep it as is
+                    new_features[feature_name] = feature_dict.copy()
 
-        # First check that the new features are not already in the new_features dictionary
-        # If they are, use a counter to append a number to the feature name
-        for feature_name, feature_dict in insert_plasmid.features.items():
-            new_feature_name = feature_name
-            if new_feature_name in new_features:
-                counter = 1
-                while f"{feature_name}_{counter}" in new_features:
-                    counter += 1
-                new_feature_name = f"{feature_name}_{counter}"
-            new_features[new_feature_name] = feature_dict
+        # Add features from the insert plasmid
+        if insert_plasmid.features:
+            for feature_name, feature_dict in insert_plasmid.features.items():
+                new_feature_name = feature_name
+                if new_feature_name in new_features:
+                    counter = 1
+                    while f"{feature_name}_{counter}" in new_features:
+                        counter += 1
+                    new_feature_name = f"{feature_name}_{counter}"
+                new_features[new_feature_name] = feature_dict.copy()
         
         return Plasmid(
             sequence=new_sequence,
-            features=new_features,
+            features=new_features if new_features else None,
             locus=self.locus
         )
 
@@ -328,22 +370,52 @@ def define_inserted_car_features( fivep_utr_seq, threep_utr_seq, car_cds_seq):
         'end': len(fivep_utr_seq),
         'strand': 1,
         'sequence': fivep_utr_seq,
+        'color': '#FFFF00',  # Yellow color
         'qualifiers': {'label': '5p UTR'}
+    }
+    car_features['kozak_car'] = {
+        'type': 'misc_feature',
+        'start': len(fivep_utr_seq)-9,
+        'end': len(fivep_utr_seq),
+        'strand': 1,
+        'sequence': fivep_utr_seq[-9:],
+        'color': '#FFFFFF',  
+        'qualifiers': {'label': 'kozak_car'}
+    }
+    car_features['car_start_codon'] = {
+        'type': 'misc_feature',
+        'start': len(fivep_utr_seq)-3,
+        'end': len(fivep_utr_seq),
+        'strand': 1,
+        'sequence': fivep_utr_seq[-3:],
+        'color': '#FF0000',  # Red color
+        'qualifiers': {'label': 'car start codon'}
     }
     car_features['car_CDS'] = {
         'type': 'misc_feature',
-        'start': len(fivep_utr_seq) + 1,
-        'end': len(fivep_utr_seq) + len(car_cds_seq) + 1,
+        'start': len(fivep_utr_seq)-3, # We put the start codon at the end of the 5p UTR
+        'end': len(fivep_utr_seq) + len(car_cds_seq),
         'strand': 1,
         'sequence': car_cds_seq,
+        'color': '#0000FF',  # Red color
         'qualifiers': {'label': 'car_CDS'}
+    }
+    car_features['car_stop_codon'] = {
+        'type': 'misc_feature',
+        'start': len(fivep_utr_seq) + len(car_cds_seq) -3,
+        'end': len(fivep_utr_seq) + len(car_cds_seq),
+        'strand': 1,
+        'sequence': car_cds_seq[-3:],
+        'color': '#FF0000',  # Red color
+        'qualifiers': {'label': 'kozak_car'}
     }
     car_features['threep_utr'] = {
         'type': 'misc_feature',
-        'start': len(fivep_utr_seq) + len(car_cds_seq) + 1,
-        'end': len(fivep_utr_seq) + len(car_cds_seq) + len(threep_utr_seq) + 1,
+        'start': len(fivep_utr_seq) + len(car_cds_seq),
+        'end': len(fivep_utr_seq) + len(car_cds_seq) + len(threep_utr_seq),
         'strand': 1,
         'sequence': threep_utr_seq,
+        'color': '#FFDD00',  # Yellow color
         'qualifiers': {'label': '3p UTR'}
     }
     return car_features
