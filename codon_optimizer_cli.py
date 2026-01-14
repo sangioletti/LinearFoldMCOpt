@@ -33,8 +33,10 @@ from src.utils import (
     codon_to_amino_acid_3L,
     aa_1L_to_codons,
     aa_3L_to_codons,
-    aa_to_codon_sequence
+    aa_to_codon_sequence,
 )
+
+from src.plasmid import Plasmid, read_genbank, define_inserted_car_features, move_features_to_insertion_point
 
 from src.mRNA import mRNA, aa_to_codon_sequence
 
@@ -107,14 +109,14 @@ def load_config(config_path: str) -> Dict[str, Any]:
         'bpp_cutoff': 0.01,
         'start_from_optimal_cai': True,
         'loss_weights': {
-            'cai': 10.0,
+            'cai': 5.0,
             'fe': 1.0,
-            'cpg': 3.0,
-            'stem': 10.0,
-            'fivep_utr_hybridisation': 3.0,
+            'cpg': 5.0,
+            'stem': 5.0,
+            'fivep_utr_hybridisation': 5.0,
             'threep_utr_hybridisation': 0.0,
-            'initial_hybridisation': 0.0,
-            'codon_divergence': 10.0,
+            'initial_hybridisation': 5.0,
+            'codon_divergence': 5.0,
         },
         'optimization': {
             'T_opt': 1.0,
@@ -141,8 +143,10 @@ def load_config(config_path: str) -> Dict[str, Any]:
         # UTR options
         'five_prime_utr': 'GCCACCAUG',  # Default 5' UTR
         'three_prime_utr': 'A'*201,  # Default 3' UTR (after stop codon)
-        'additional_car_codons': '',
-        'binder_linker': '',
+        'extra_cds': '',
+        'pre_binder_cds': 'atgcttctcctggtgacaagccttctgctctgtgagttaccacacccagcattcctcctgatccca', #(hCSF2RA) signalling peptide
+        'plasmid_file': None,
+        'plasmid_modifiable_region': None,
     }
     
     # Merge defaults with config (config takes precedence)
@@ -209,6 +213,18 @@ def get_sequence_from_config(config: Dict[str, Any]) -> str:
             "sequence, aa_sequence, pdb_id, or fasta_file"
         )
 
+    # Remove potential start codon from the sequence, as it will be inserted before anyway
+    sequence = sequence.upper().replace( "T", "U" )
+    print(f"Removing start codon to avoid problems (it will be added later)")
+    if sequence[:3] == "AUG":
+        sequence = sequence[3:]
+
+    # Add part of sequence before binder. Useful to insert signalling peptides that will eventually be cleaved
+    print(f"Adding pre signalling peptide to sequence of the binder: {config.get('pre_binder_cds', '')}")
+    pre_binder_cds = config.get('pre_binder_cds', '')
+    if pre_binder_cds:
+        sequence = pre_binder_cds + sequence 
+    
     # Add binder linker, if specified
     print(f"Adding binder linker to CDS: {config.get('binder_linker', '')}")
     binder_linker = config.get('binder_linker', '')
@@ -316,6 +332,10 @@ class CodonOptimizerCLI:
         result_dir = os.path.join(base_out_dir, f"result_{unique_id}")
         os.makedirs(result_dir, exist_ok=True)
         
+        # Resolve plasmid_file path before changing directory
+        if cfg.get('plasmid_file'):
+            cfg['plasmid_file'] = os.path.abspath(cfg['plasmid_file'])
+        
         # Change to result directory
         original_dir = os.getcwd()
         os.chdir(result_dir)
@@ -328,7 +348,8 @@ class CodonOptimizerCLI:
             cai_dict = get_cai_dict(cfg['species'])
 
             all_sequence = fivep_utr + cds_sequence + threep_utr
-            
+
+
             # Create mRNA system
             print(f"\nInitializing mRNA system...")
             print(f"  Sequence length: {len(all_sequence)} nucleotides")
@@ -357,6 +378,23 @@ class CodonOptimizerCLI:
             print(f"  Number of codons: {len(system.codons)}")
             print(f"  Initial free energy (x nucleotide): {system.free_energy/system.n_nucleotides:.4f} kcal/mol")
             print(f"  Initial CAI (x codon): {system.calculate_CAI(form='linear',normalise=True):.4f}")
+
+            if cfg['start_from_optimal_cai']:
+                # In this case, system is already optimized for CAI only
+                if cfg['plasmid_file']:
+                    sequence, features = read_genbank(cfg['plasmid_file'])
+                    base_plasmid = Plasmid(sequence=sequence, features=features)
+                    start_nt, stop_nt = cfg['plasmid_modifiable_region']
+                    fivep_utr_seq = system.fivep_utr_sequence
+                    threep_utr_seq = system.threep_utr_sequence
+                    car_cds_seq = system.cds_sequence
+                    insert_features = define_inserted_car_features( fivep_utr_seq, threep_utr_seq, car_cds_seq)
+                    insert_features = move_features_to_insertion_point( start_nt, insert_features )
+                    insert_plasmid = Plasmid(sequence=fivep_utr_seq + car_cds_seq + threep_utr_seq, features=insert_features)
+                    print(f"Inserted CAR features: {insert_features}")
+                    base_plasmid.merge_plasmid(insert_plasmid=insert_plasmid, start_cut=start_nt, end_cut=stop_nt)
+                    name = os.path.basename('CAI_optimized_plasmid.dna' )
+                    base_plasmid.to_genbank(name)
             
             # Run optimization
             opt_cfg = cfg['optimization']

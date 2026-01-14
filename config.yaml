@@ -11,14 +11,14 @@ identifier: null  # leave null for auto-generation
 # --------------------------------------------------
 
 # Option 1: Direct nucleotide sequence
-# sequence: "AUGUUUAAAGGG..."
+cds_sequence: "CCCGGGCCC"
 
 # Option 2: Direct amino acid sequence (1-letter code)
-aa_sequence: "FKGFKGFKGHHHHKG"
+#aa_sequence: "FKGFKGFKGHHHHKG"
 
 # Option 3: PDB ID to fetch sequence from
-pdb_id: null #"1BA3"
-pdb_chain: null  # Optional: specify chain (e.g., "A")
+#pdb_id: null #"1BA3"
+#pdb_chain: null  # Optional: specify chain (e.g., "A")
 
 # Option 4: FASTA file path
 # fasta_file: "/path/to/sequence.fasta"
@@ -88,3 +88,6 @@ output:
   output_dir: "."               # Base output directory
   save_structure_svg: true
   save_prob_matrix: true
+
+plasmid_file: "kite_plasmid.gb"
+plasmid_modifiable_region: [3765, 6200]
