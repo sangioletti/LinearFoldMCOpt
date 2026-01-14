@@ -276,6 +276,63 @@ class Plasmid:
             locus=self.locus
         )
 
+    def tag_feature(self, 
+            start_nt: int,
+            sequence: str,
+            strand: int = 1,
+            feature_name: str = 'misc_feature',
+            tag: str = 'misc_feature',
+            color: str = '#FF00FF') -> "Plasmid":
+        """
+        Add a new feature to the plasmid.
+        
+        Args:
+            start_nt: Start position of the feature
+            sequence: Sequence of the feature
+            strand: Strand direction (1 for forward, -1 for reverse)
+            feature_name: Name of the feature (used as key in features dict)
+            tag: Label tag for the feature
+            color: Hex color code for the feature
+            
+        Returns:
+            Plasmid: A new Plasmid instance with the added feature
+        """
+        # Create the feature dictionary
+        feature = {
+            'type': 'misc_feature',
+            'start': start_nt,
+            'end': start_nt + len(sequence),
+            'strand': strand,
+            'sequence': sequence,
+            'color': color,
+            'qualifiers': {'label': tag}
+        }
+        
+        # Start with existing features or empty dict
+        new_features = self.features.copy() if self.features else {}
+        
+        # Check if feature_name already exists, if so, add a number to the end
+        final_feature_name = feature_name
+        if final_feature_name in new_features:
+            counter = 1
+            while f"{feature_name}_{counter}" in new_features:
+                counter += 1
+            final_feature_name = f"{feature_name}_{counter}"
+        
+        # Add the feature
+        new_features[final_feature_name] = feature
+        
+        # Return a new Plasmid instance (since it's frozen)
+        return Plasmid(
+            sequence=self.sequence,
+            features=new_features,
+            locus=self.locus,
+            definition=self.definition,
+            organism=self.organism,
+            circular=self.circular
+        )
+
+
 def write_genbank(
     sequence: str,
     output_file: str | Path,
@@ -323,6 +380,19 @@ def write_genbank(
     # Add features
     if features:
         for name, info in features.items():
+            qualifiers = {'label': [name]}
+            
+            # Add color if specified (for ApE compatibility)
+            if 'color' in info:
+                color = info['color']
+                # ApE uses ApEinfo_fwdcolor and ApEinfo_revcolor for forward and reverse strand colors
+                qualifiers['ApEinfo_fwdcolor'] = [color]
+                qualifiers['ApEinfo_revcolor'] = [color]
+            
+            # Preserve any existing qualifiers from the feature info
+            if 'qualifiers' in info:
+                qualifiers.update(info['qualifiers'])
+            
             feature = SeqFeature(
                 location=FeatureLocation(
                     start=info.get('start', 0),
@@ -330,7 +400,7 @@ def write_genbank(
                     strand=info.get('strand', 1)
                 ),
                 type=info.get('type', 'misc_feature'),
-                qualifiers={'label': [name]}
+                qualifiers=qualifiers
             )
             record.features.append(feature)
     
@@ -361,6 +431,8 @@ def print_plasmid_info(file_path: str | Path) -> None:
         print(f"    Type: {info['type']}")
         print(f"    Location: {info['start']}..{info['end']} ({strand})")
         print(f"    Length: {info['end'] - info['start']} bp")
+
+
 
 def define_inserted_car_features( fivep_utr_seq, threep_utr_seq, car_cds_seq):
     car_features = {}
@@ -407,7 +479,7 @@ def define_inserted_car_features( fivep_utr_seq, threep_utr_seq, car_cds_seq):
         'strand': 1,
         'sequence': car_cds_seq[-3:],
         'color': '#FF0000',  # Red color
-        'qualifiers': {'label': 'kozak_car'}
+        'qualifiers': {'label': 'car stop codon'}
     }
     car_features['threep_utr'] = {
         'type': 'misc_feature',

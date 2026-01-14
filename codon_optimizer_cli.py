@@ -395,6 +395,13 @@ class CodonOptimizerCLI:
                     insert_features = define_inserted_car_features( fivep_utr_seq, threep_utr_seq, car_cds_seq)
                     insert_features = move_features_to_insertion_point( start_nt, insert_features )
                     insert_plasmid = Plasmid(sequence=fivep_utr_seq + car_cds_seq + threep_utr_seq, features=insert_features)
+                    if cfg['pre_binder_cds']:
+                        insert_plasmid = insert_plasmid.tag_feature(
+                            start_nt=insert_plasmid.features['car_CDS']['start'], 
+                            sequence= cfg['pre_binder_cds'], 
+                            strand=1, 
+                            feature_name='signal_peptide', 
+                            tag='signal_peptide')
                     print(f"Inserted CAR features: {insert_features}")
                     print(f"Inserted plasmid length: {len(insert_plasmid.sequence)}")
                     print(f"Length of cut region: {stop_nt - start_nt}")
