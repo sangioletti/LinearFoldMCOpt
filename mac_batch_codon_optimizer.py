@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Batch Codon Optimization Script
+Mac/Local Batch Codon Optimization Script
 
 This script reads a CSV file containing multiple sequences and generates
-PBS job scripts for parallel processing on an HPC cluster.
+local bash scripts for parallel or sequential processing on a Mac or local workstation.
+Derived from batch_codon_optimizer.py but simplified for local execution.
 
 Usage:
-    python batch_codon_optimizer.py sequences.csv config.yaml --output_dir jobs
+    python mac_batch_codon_optimizer.py sequences.csv config.yaml --output_dir jobs
     
 CSV Format:
     name,sequence,type
@@ -71,8 +72,11 @@ def read_sequences_csv(csv_path: str) -> List[Dict[str, str]]:
     """
     sequences = []
     
+    if not os.path.exists(csv_path):
+        print(f"Error: CSV file not found: {csv_path}")
+        return []
+
     with open(csv_path, 'r', newline='') as f:
-        # Use standard comma-delimited CSV (don't rely on sniffer - it's unreliable)
         reader = csv.DictReader(f)
         
         for i, row in enumerate(reader):
@@ -104,48 +108,30 @@ def read_sequences_csv(csv_path: str) -> List[Dict[str, str]]:
     
     return sequences
 
-def generate_pbs_script(
+
+def generate_local_script(
     job_name: str,
     config_path: str,
     job_dir: str,
     script_path: str,
     python_path: str,
-    queue: str = "hx",
-    walltime: str = "24:00:00",
-    ncpus: int = 1,
-    mem: str = "8GB",
-    modules: Optional[List[str]] = None,
     conda_env: Optional[str] = None,
 ) -> str:
-    """Generate a PBS job script."""
+    """Generate a local bash job script."""
     
     script = f"""#!/bin/bash
-#PBS -N codon_{job_name[:12]}
-#PBS -q {queue}
-#PBS -l walltime={walltime}
-#PBS -l ncpus={ncpus}
-#PBS -l mem={mem}
-#PBS -o {job_dir}/job.out
-#PBS -e {job_dir}/job.err
-#PBS -j oe
+# Local job script for {job_name}
 
 # Print job information
-echo "Job started at $(date)"
+echo "Job {job_name} started at $(date)"
 echo "Running on host: $(hostname)"
-echo "Working directory: $PBS_O_WORKDIR"
+echo "Working directory: {job_dir}"
 echo ""
 
-# Change to submission directory
-cd $PBS_O_WORKDIR
+# Change to job directory
+cd {job_dir}
 
 """
-    
-    # Add module loads if specified
-    if modules:
-        script += "# Load modules\n"
-        for module in modules:
-            script += f"module load {module}\n"
-        script += "\n"
     
     # Add conda activation if specified
     if conda_env:
@@ -177,78 +163,9 @@ fi
     return script
 
 
-def generate_slurm_script(
-    job_name: str,
-    config_path: str,
-    job_dir: str,
-    script_path: str,
-    python_path: str,
-    partition: str = "hx",
-    time: str = "24:00:00",
-    cpus: int = 1,
-    mem: str = "8G",
-    modules: Optional[List[str]] = None,
-    conda_env: Optional[str] = None,
-) -> str:
-    """Generate a SLURM job script (alternative to PBS)."""
-    
-    script = f"""#!/bin/bash
-#SBATCH --job-name=codon_{job_name[:12]}
-#SBATCH --partition={partition}
-#SBATCH --time={time}
-#SBATCH --cpus-per-task={cpus}
-#SBATCH --mem={mem}
-#SBATCH --output={job_dir}/job.out
-#SBATCH --error={job_dir}/job.err
-
-# Print job information
-echo "Job started at $(date)"
-echo "Running on host: $(hostname)"
-echo "Working directory: $SLURM_SUBMIT_DIR"
-echo ""
-
-# Change to submission directory
-cd $SLURM_SUBMIT_DIR
-
-"""
-    
-    if modules:
-        script += "# Load modules\n"
-        for module in modules:
-            script += f"module load {module}\n"
-        script += "\n"
-    
-    if conda_env:
-        script += f"""# Activate conda environment
-source $(conda info --base)/etc/profile.d/conda.sh
-conda activate {conda_env}
-echo "Conda environment: $CONDA_DEFAULT_ENV"
-echo ""
-
-"""
-    
-    script += f"""# Run codon optimization
-echo "Starting codon optimization for {job_name}..."
-{python_path} {script_path} optimize \\
-    --config {config_path} \\
-    --job_name {job_name}
-
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "Job {job_name} completed successfully at $(date)"
-else
-    echo ""
-    echo "Job {job_name} FAILED at $(date)"
-    exit 1
-fi
-"""
-    
-    return script
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate batch job scripts for codon optimization",
+        description="Generate batch job scripts for local codon optimization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 CSV Format Example:
@@ -267,20 +184,10 @@ Or with PDB IDs:
     parser.add_argument("--csv_file", "-c", help="CSV file containing sequences")
     parser.add_argument("--config", "-g", default="config.yaml",
                         help="YAML configuration file (default: config.yaml)")
-    parser.add_argument("--output_dir", "-o", default="batch_jobs",
-                        help="Output directory for job files (default: batch_jobs)")
-    parser.add_argument("--scheduler", choices=["pbs", "slurm"], default="pbs",
-                        help="Job scheduler type (default: pbs)")
-    parser.add_argument("--queue", "-q", default="hx",
-                        help="Queue/partition name (default: hx)")
-    parser.add_argument("--walltime", "-t", default="24:00:00",
-                        help="Wall time limit (default: 24:00:00)")
-    parser.add_argument("--ncpus", "-n", type=int, default=1,
-                        help="Number of CPUs per job (default: 1)")
-    parser.add_argument("--mem", "-m", default="8GB",
-                        help="Memory per job (default: 8GB)")
-    parser.add_argument("--modules", nargs="+", default=None,
-                        help="Modules to load (space-separated)")
+    parser.add_argument("--output_dir", "-o", default="local_batch_jobs",
+                        help="Output directory for job files (default: local_batch_jobs)")
+    parser.add_argument("--parallel", "-p", type=int, default=None,
+                        help="Number of jobs to run in parallel in the master script (default: 1 or value in config)")
     parser.add_argument("--conda_env", default=None,
                         help="Conda environment to activate")
     parser.add_argument("--python_path", default=None,
@@ -307,7 +214,12 @@ Or with PDB IDs:
     if not os.path.exists(csv_file):
         print(f"Error: CSV file not found: {csv_file}")
         sys.exit(1)
-    
+
+    # Get parallel cores
+    parallel_cores = args.parallel
+    if parallel_cores is None:
+        parallel_cores = base_config.get('parallel_cores', 1)
+
     # Get paths
     python_path = args.python_path or sys.executable
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -374,39 +286,17 @@ Or with PDB IDs:
         with open(config_path, 'w') as f:
             yaml.dump(job_config, f, default_flow_style=False)
         
-        # Generate scheduler script
-        if args.scheduler == "pbs":
-            script = generate_pbs_script(
-                job_name=name,
-                config_path=os.path.abspath(config_path),
-                job_dir=os.path.abspath(job_dir),
-                script_path=cli_script,
-                python_path=python_path,
-                queue=args.queue,
-                walltime=args.walltime,
-                ncpus=args.ncpus,
-                mem=args.mem,
-                modules=args.modules,
-                conda_env=args.conda_env,
-            )
-            script_ext = ".pbs"
-        else:
-            script = generate_slurm_script(
-                job_name=name,
-                config_path=os.path.abspath(config_path),
-                job_dir=os.path.abspath(job_dir),
-                script_path=cli_script,
-                python_path=python_path,
-                partition=args.queue,
-                time=args.walltime,
-                cpus=args.ncpus,
-                mem=args.mem.replace('GB', 'G'),  # SLURM uses 'G' not 'GB'
-                modules=args.modules,
-                conda_env=args.conda_env,
-            )
-            script_ext = ".slurm"
+        # Generate local script
+        script = generate_local_script(
+            job_name=name,
+            config_path=os.path.abspath(config_path),
+            job_dir=os.path.abspath(job_dir),
+            script_path=cli_script,
+            python_path=python_path,
+            conda_env=args.conda_env,
+        )
         
-        script_path = os.path.join(job_dir, f'{name}{script_ext}')
+        script_path = os.path.join(job_dir, f'run_{name}.sh')
         with open(script_path, 'w') as f:
             f.write(script)
         os.chmod(script_path, 0o755)
@@ -414,48 +304,70 @@ Or with PDB IDs:
         job_scripts.append(script_path)
         print(f"  Created: {name}")
     
-    # Create master submission script
-    submit_cmd = "qsub" if args.scheduler == "pbs" else "sbatch"
-    
+    # Create master execution script
     master_script = f"""#!/bin/bash
-# Master script to submit all codon optimization jobs
-# Generated by batch_codon_optimizer.py
-# Scheduler: {args.scheduler.upper()}
+# Master script to run all codon optimization jobs locally
+# Generated by mac_batch_codon_optimizer.py
 
 cd {os.path.abspath(args.output_dir)}
 
-echo "Submitting {len(job_scripts)} codon optimization jobs..."
+echo "Starting {len(job_scripts)} codon optimization jobs..."
+echo "Output directory: $(pwd)"
 echo ""
 
 """
     
-    for i, script_path in enumerate(job_scripts):
-        master_script += f'echo "Submitting job {i+1}/{len(job_scripts)}: {os.path.basename(os.path.dirname(script_path))}"\n'
-        master_script += f"{submit_cmd} {os.path.abspath(script_path)}\n"
-        master_script += "sleep 0.5  # Small delay between submissions\n\n"
+    if parallel_cores > 1:
+        master_script += f"""# Running in parallel (max {parallel_cores} jobs)
+# Using a basic backgrounding and wait mechanism
+MAX_JOBS={parallel_cores}
+COUNT=0
+
+for script in {" ".join([os.path.abspath(s) for s in job_scripts])}; do
+    echo "Launching $(basename $script)..."
+    bash $script > "${{script%.sh}}.log" 2>&1 &
+    COUNT=$((COUNT+1))
     
-    master_script += f"""
+    # Simple rate limiting for parallel jobs
+    if (( COUNT % MAX_JOBS == 0 )); then
+        echo "Waiting for batch of $MAX_JOBS jobs to complete..."
+        wait
+    fi
+done
+
+wait
 echo ""
-echo "All {len(job_scripts)} jobs submitted!"
-echo "Monitor with: {'qstat -u $USER' if args.scheduler == 'pbs' else 'squeue -u $USER'}"
+echo "All parallel jobs finished execution."
 """
-    
-    master_path = os.path.join(args.output_dir, f'submit_all.sh')
+    else:
+        for i, script_path in enumerate(job_scripts):
+            name = os.path.basename(os.path.dirname(script_path))
+            master_script += f'echo "Running job {i+1}/{len(job_scripts)}: {name}"\n'
+            master_script += f"bash {os.path.abspath(script_path)}\n"
+            master_script += "echo \"\"\n"
+        
+        master_script += "echo \"All sequential jobs finished execution.\"\n"
+
+    master_path = os.path.join(args.output_dir, f'run_all.sh')
     with open(master_path, 'w') as f:
         f.write(master_script)
     os.chmod(master_path, 0o755)
     
     # Print summary
     print(f"\n{'='*60}")
-    print("BATCH JOB GENERATION COMPLETE")
+    print("LOCAL BATCH JOB GENERATION COMPLETE")
     print(f"{'='*60}")
     print(f"Generated {len(job_scripts)} job scripts in: {args.output_dir}")
-    print(f"Scheduler: {args.scheduler.upper()}")
-    print(f"\nTo submit all jobs, run:")
+    if parallel_cores > 1:
+        print(f"Parallel mode enabled: {parallel_cores} simultaneous jobs")
+    else:
+        print(f"Sequential mode enabled")
+    print(f"\nTo run all jobs, execute:")
     print(f"  bash {master_path}")
-    print(f"\nOr submit individual jobs:")
-    print(f"  {submit_cmd} {job_scripts[0]}")
+    print(f"\nOr run individual jobs:")
+    print(f"  bash {job_scripts[0]}")
 
 
 if __name__ == "__main__":
     main()
+

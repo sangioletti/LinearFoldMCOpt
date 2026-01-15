@@ -1,6 +1,11 @@
 # Codon Optimization Configuration File
 # =====================================
 
+# Batch Job Configuration
+# -----------------------
+sequences_csv: "sequences_CARs_BCMA_affi.csv"  # CSV file containing multiple sequences
+parallel_cores: 4                # Number of parallel jobs (for mac_batch_codon_optimizer.py)
+
 # Unique Identifier
 # -----------------
 # Used for naming output folder (result_{identifier}) and files
@@ -23,8 +28,17 @@ cds_sequence: "CCCGGGCCC"
 # Option 4: FASTA file path
 # fasta_file: "/path/to/sequence.fasta"
 
+# Plasmid Configuration
+# ---------------------
+plasmid_file: "kite_plasmid.gb"
+plasmid_modifiable_region: [3759, 6200]
+
 # Sequence Processing
 # -------------------
+# Signalling peptide for transport to membrane
+# ideal sequence of GM-SCF: "ATGTGGCTGCAGAGCCTGCTGCTGCTGGGCACCGTGGCTTGCAGCATCAGC"
+pre_binder_cds: "atgcttctcctggtgacaagccttctgctctgtgagttaccacacccagcattcctcctgatccca"  
+
 # 5'UTR taken from plasmid pLenti-NGFR-mCA8LHBCMA
 five_prime_utr: "GTTTAGTGAACCGTCAGATCGCCTGGAGACGCCATCCACGCTGTTTTGACCTCCATAGAAGACACCGGAGCTTCTAGAGCCACCATG" # 5' UTR to prepend (before start codon).
 
@@ -89,5 +103,3 @@ output:
   save_structure_svg: true
   save_prob_matrix: true
 
-plasmid_file: "kite_plasmid.gb"
-plasmid_modifiable_region: [3759, 6200]
