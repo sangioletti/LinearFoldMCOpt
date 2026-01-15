@@ -22,6 +22,7 @@ import sys
 import csv
 import yaml
 import argparse
+import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -281,6 +282,42 @@ Or with PDB IDs:
             job_config['output'] = {}
         job_config['output']['output_dir'] = os.path.abspath(job_dir)
         
+        # Merge all other CSV columns into job config
+        for k, v in seq_info.items():
+            if k not in ['name', 'sequence', 'seq', 'type', 'pdb_id', 'chain'] and v:
+                job_config[k] = v
+
+        # Copy plasmid file if specified in the config
+        if job_config.get('plasmid_file'):
+            plasmid_filename = job_config['plasmid_file']
+            # Try to find the file relative to the base config file directory,
+            # relative to the CSV file directory, relative to current directory, 
+            # or as an absolute path
+            config_dir = os.path.dirname(os.path.abspath(args.config))
+            csv_dir = os.path.dirname(os.path.abspath(csv_file))
+            
+            potential_paths = [
+                os.path.join(config_dir, plasmid_filename),
+                os.path.join(csv_dir, plasmid_filename),
+                os.path.abspath(plasmid_filename),
+                plasmid_filename
+            ]
+            
+            src_plasmid = None
+            for p in potential_paths:
+                if os.path.exists(p):
+                    src_plasmid = p
+                    break
+            
+            if src_plasmid:
+                dst_plasmid = os.path.join(job_dir, os.path.basename(plasmid_filename))
+                # Only copy if it doesn't already exist or if we want to overwrite
+                shutil.copy2(src_plasmid, dst_plasmid)
+                # Ensure the job-specific config uses the base filename
+                job_config['plasmid_file'] = os.path.basename(plasmid_filename)
+            else:
+                print(f"Warning: Plasmid file '{plasmid_filename}' not found at any of: {potential_paths}")
+
         # Write job config
         config_path = os.path.join(job_dir, 'config.yaml')
         with open(config_path, 'w') as f:

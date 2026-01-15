@@ -38,8 +38,6 @@ from src.utils import (
     aa_to_codon_sequence,
 )
 
-from src.plasmid import Plasmid, read_genbank, define_inserted_car_features, move_features_to_insertion_point
-
 from src.mRNA import mRNA, aa_to_codon_sequence
 
 
@@ -386,43 +384,22 @@ class CodonOptimizerCLI:
             if cfg['start_from_optimal_cai']:
                 # In this case, system is already optimized for CAI only
                 if cfg['plasmid_file']:
-                    sequence, features = read_genbank(cfg['plasmid_file'])
-                    base_plasmid = Plasmid(sequence=sequence, features=features)
-                    start_nt, stop_nt = cfg['plasmid_modifiable_region']
-                    fivep_utr_seq = system.fivep_utr_sequence
-                    threep_utr_seq = system.threep_utr_sequence
-                    car_cds_seq = system.cds_sequence
-                    insert_features = define_inserted_car_features( fivep_utr_seq, threep_utr_seq, car_cds_seq)
-                    insert_features = move_features_to_insertion_point( start_nt, insert_features )
-                    insert_plasmid = Plasmid(sequence=fivep_utr_seq + car_cds_seq + threep_utr_seq, features=insert_features)
-                    if cfg['pre_binder_cds']:
-                        insert_plasmid = insert_plasmid.tag_feature(
-                            start_nt=insert_plasmid.features['car_CDS']['start'], 
-                            sequence= cfg['pre_binder_cds'], 
-                            strand=1, 
-                            feature_name='signal_peptide', 
-                            tag='signal_peptide')
-                    print(f"Inserted CAR features: {insert_features}")
-                    print(f"Inserted plasmid length: {len(insert_plasmid.sequence)}")
-                    print(f"Length of cut region: {stop_nt - start_nt}")
-                    print(f"Base plasmid length: {len(base_plasmid.sequence)}, expected length: {len(base_plasmid.sequence) - (stop_nt - start_nt) + len(insert_plasmid.sequence)}")
-                    cai_optimized_plasmid = copy.deepcopy(base_plasmid)
-                    cai_optimized_plasmid = cai_optimized_plasmid.merge_plasmid(insert_plasmid=insert_plasmid, start_cut=start_nt, end_cut=stop_nt)
-                    name = os.path.basename('CAI_optimized_plasmid.dna' )
-                    cai_optimized_plasmid.to_genbank(name)
-                    if len( base_plasmid.sequence ) - (stop_nt - start_nt) + len( insert_plasmid.sequence ) != len(cai_optimized_plasmid.sequence):
-                        print(f"WARNING: The length of the CAI optimized plasmid is not equal to the length of the base plasmid minus the length of the modifiable region.")
-                        print(f"Base plasmid length: {len(base_plasmid.sequence)}")
-                        print(f"CAI optimized plasmid length: {len(cai_optimized_plasmid.sequence)}")
-                        raise ValueError("The length of the CAI optimized plasmid is not equal to the length of the base plasmid minus the length of the modifiable region.")
+                    plasmid_filename = system.write_plasmid(cfg, 'CAI_optimized_plasmid.dna')
             
             # Run optimization
             opt_cfg = cfg['optimization']
             output_filename = job_name + "_statistics.txt" if job_name else opt_cfg['output_filename']
             
+            # Determine plasmid filename base if plasmid writing is enabled
+            plasmid_filename_base = None
+            if cfg.get('plasmid_file'):
+                plasmid_filename_base = job_name + "_optimized_plasmid.dna" if job_name else "optimized_plasmid.dna"
+            
             print(f"\nStarting optimization...")
             print(f"  T_opt: {opt_cfg['T_opt']}")
             print(f"  nsteps: {opt_cfg['nsteps']}")
+            if plasmid_filename_base:
+                print(f"  Plasmid files will be saved with base name: {plasmid_filename_base}")
             
             system.optimize_codon_usage(
                 T_opt=opt_cfg['T_opt'],
@@ -433,6 +410,8 @@ class CodonOptimizerCLI:
                 n_sample=opt_cfg.get('n_sample'),
                 use_average_stem_length=opt_cfg['use_average_stem_length'],
                 average_stem_num_samples=opt_cfg['average_stem_num_samples'],
+                config=cfg if cfg.get('plasmid_file') else None,
+                plasmid_filename_base=plasmid_filename_base,
             )
             
             # Print results

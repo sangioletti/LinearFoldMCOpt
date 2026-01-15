@@ -3,9 +3,11 @@
 
 import numpy as np
 import time
+import os
 from .codons import *
 from .linearpartition_wrapper import LinearPartitionWrapper
 from .utils import *
+from .plasmid import Plasmid, read_genbank, define_inserted_car_features, move_features_to_insertion_point
 import copy
 
 class mRNA:
@@ -1693,7 +1695,9 @@ class mRNA:
                             output_filename: str = "opt_statistics.txt",
                             n_sample: int = None,
                             use_average_stem_length: bool = False,
-                            average_stem_num_samples: int = 20
+                            average_stem_num_samples: int = 20,
+                            config: dict = None,
+                            plasmid_filename_base: str = None
                             ):
         """
         Perform optimisation of the codon usage of the mRNA sequence.
@@ -1709,7 +1713,15 @@ class mRNA:
                                      If False, use longest stem from MFE structure (default, faster).
             average_stem_num_samples: Number of structures to sample for average stem calculation.
                                      Only used if use_average_stem_length=True. Default is 100.
+            config: Optional configuration dictionary for plasmid writing. If provided along with
+                    plasmid_filename_base, plasmid files will be written whenever statistics are saved.
+            plasmid_filename_base: Base filename for plasmid files (e.g., 'optimized_plasmid.dna').
+                                  Step number will be appended: 'optimized_plasmid_step_100.dna'
         """
+        # Store config and plasmid filename for later use
+        self._optimization_config = config
+        self._plasmid_filename_base = plasmid_filename_base
+        
         # Perform optimisation of the codon usage of the mRNA sequence 
         nsteps = int(nsteps) * len(self.codons)
         T_schedule = T_opt * np.linspace(1, 0, nsteps)
@@ -1836,6 +1848,16 @@ class mRNA:
                 # Save statistics
                 try:
                     self.save_statistics(i, acceptance_rate, output_filename)
+                    # Write plasmid file if config and filename base are provided
+                    if self._optimization_config and self._plasmid_filename_base:
+                        try:
+                            base_name, ext = os.path.splitext(self._plasmid_filename_base)
+                            if not ext:
+                                ext = '.dna'
+                            step_plasmid_filename = f"{base_name}_step_{i}{ext}"
+                            self.write_plasmid(self._optimization_config, step_plasmid_filename)
+                        except Exception as e:
+                            print(f"Warning: Could not write plasmid at step {i}: {e}")
                 except Exception as e:
                     print(f"Error saving statistics at step {i}: {e}")
                 
@@ -1893,6 +1915,16 @@ class mRNA:
         else:
             final_acceptance_rate = 0.0
         self.save_statistics(nsteps, final_acceptance_rate, output_filename)
+        # Write final plasmid file if config and filename base are provided
+        if self._optimization_config and self._plasmid_filename_base:
+            try:
+                base_name, ext = os.path.splitext(self._plasmid_filename_base)
+                if not ext:
+                    ext = '.dna'
+                final_plasmid_filename = f"{base_name}_final{ext}"
+                self.write_plasmid(self._optimization_config, final_plasmid_filename)
+            except Exception as e:
+                print(f"Warning: Could not write final plasmid: {e}")
         # Save final probability matrix
         self.save_prob_matrix(nsteps)
         # Save final structure
@@ -1904,6 +1936,109 @@ class mRNA:
         
         print(f"Final loss: {self._loss}, mfe: {self.mfe}, cai: {np.exp(self.calculate_CAI_log())}")
         print(f"Statistics saved to {output_filename}")
+        
+        # Clean up optimization-specific attributes
+        if hasattr(self, '_optimization_config'):
+            delattr(self, '_optimization_config')
+        if hasattr(self, '_plasmid_filename_base'):
+            delattr(self, '_plasmid_filename_base')
+
+    def write_plasmid(self, config: dict, plasmid_filename: str) -> str:
+        """
+        Write a plasmid file by merging the current mRNA sequence into a base plasmid.
+        
+        Args:
+            config: Configuration dictionary containing:
+                - 'plasmid_file': Path to base plasmid GenBank file
+                - 'plasmid_modifiable_region': [start_nt, stop_nt] tuple for insertion point
+                - 'pre_binder_cds': Optional pre-binder CDS sequence for signal peptide tagging
+            plasmid_filename: Base name for the output plasmid file (will be numbered if exists)
+            
+        Returns:
+            str: The actual filename used (may be modified if file already exists)
+            
+        Raises:
+            ValueError: If plasmid length validation fails
+        """
+        if not config.get('plasmid_file'):
+            raise ValueError("plasmid_file must be specified in config to write plasmid")
+        
+        if not config.get('plasmid_modifiable_region'):
+            raise ValueError("plasmid_modifiable_region must be specified in config to write plasmid")
+        
+        # Read base plasmid
+        sequence, features = read_genbank(config['plasmid_file'])
+        base_plasmid = Plasmid(sequence=sequence, features=features)
+        
+        # Get insertion region
+        start_nt, stop_nt = config['plasmid_modifiable_region']
+        
+        # Get current mRNA sequences
+        fivep_utr_seq = self.fivep_utr_sequence
+        threep_utr_seq = self.threep_utr_sequence
+        car_cds_seq = self.cds_sequence
+        
+        # Define features for the inserted CAR sequence
+        insert_features = define_inserted_car_features(fivep_utr_seq, threep_utr_seq, car_cds_seq)
+        insert_features = move_features_to_insertion_point(start_nt, insert_features)
+        
+        # Create insert plasmid
+        insert_plasmid = Plasmid(
+            sequence=fivep_utr_seq + car_cds_seq + threep_utr_seq,
+            features=insert_features
+        )
+        
+        # Add signal peptide feature if pre_binder_cds is specified
+        if config.get('pre_binder_cds'):
+            insert_plasmid = insert_plasmid.tag_feature(
+                start_nt=insert_plasmid.features['car_CDS']['start'],
+                sequence=config['pre_binder_cds'],
+                strand=1,
+                feature_name='signal_peptide',
+                tag='signal_peptide'
+            )
+        
+        print(f"Inserted CAR features: {insert_features}")
+        print(f"Inserted plasmid length: {len(insert_plasmid.sequence)}")
+        print(f"Length of cut region: {stop_nt - start_nt}")
+        print(f"Base plasmid length: {len(base_plasmid.sequence)}, expected length: {len(base_plasmid.sequence) - (stop_nt - start_nt) + len(insert_plasmid.sequence)}")
+        
+        # Merge plasmids
+        merged_plasmid = copy.deepcopy(base_plasmid)
+        merged_plasmid = merged_plasmid.merge_plasmid(
+            insert_plasmid=insert_plasmid,
+            start_cut=start_nt,
+            end_cut=stop_nt
+        )
+        
+        # Generate unique filename if file already exists
+        base_name, ext = os.path.splitext(plasmid_filename)
+        if not ext:
+            ext = '.dna'  # Default extension
+        
+        final_filename = plasmid_filename
+        counter = 1
+        while os.path.exists(final_filename):
+            final_filename = f"{base_name}_{counter}{ext}"
+            counter += 1
+        
+        # Validate length
+        expected_length = len(base_plasmid.sequence) - (stop_nt - start_nt) + len(insert_plasmid.sequence)
+        if expected_length != len(merged_plasmid.sequence):
+            print(f"WARNING: The length of the plasmid '{final_filename}' is not equal to the length of the base plasmid minus the length of the modifiable region.")
+            print(f"Base plasmid length: {len(base_plasmid.sequence)}")
+            print(f"Plasmid '{final_filename}' length: {len(merged_plasmid.sequence)}")
+            print(f"Expected length: {expected_length}")
+            raise ValueError(
+                f"The length of the plasmid '{final_filename}' is not equal to the length of the base plasmid "
+                f"minus the length of the modifiable region. Expected {expected_length}, got {len(merged_plasmid.sequence)}."
+            )
+        
+        # Write plasmid file
+        merged_plasmid.to_genbank(final_filename)
+        print(f"Plasmid written to: {final_filename}")
+        
+        return final_filename
 
     def start_from_optimal_cai(self):
         """
